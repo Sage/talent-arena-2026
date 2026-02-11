@@ -1,4 +1,6 @@
-## 🚀 Session 1 - From Prompts to Partners: Building Your First AI Agent 
+# Sage Talent Arena Workshop 2026
+
+## 🚀 From Prompts to Partners: Building Your First AI Agent 
 
 AI is no longer just about asking good questions—it’s about creating systems that can think, act, and collaborate.  In this hands-on workshop, you’ll learn what AI agents really are, how they work, and how to design your own. No PhD required. By the end, you’ll understand how agents reason, use tools, and make decisions—and you’ll prototype one yourself. Perfect for builders, product people, founders, and curious minds who want to move beyond ChatGPT and into agentic AI. 
 
