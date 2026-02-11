@@ -1,1 +1,1 @@
-# Sage Talent Arena Workshops 2026
+# Sage Talent Arena Workshop 2026
