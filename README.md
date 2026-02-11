@@ -1,11 +1,2 @@
-# Sage Talent Arena Workshops 2026
-
 ## 🚀 Session 1 - From Prompts to Partners: Building Your First AI Agent 
-
-[Open in Colab](https://colab.research.google.com/github/Sage/talent-arena-2026/blob/session-1/notebooks/workshop.ipynb)
-
----
-
-## 🚀 Session 2 - Giving AI Agents Superpowers: Connecting Them to the Real World with MCP 
-
-[Open in Colab](https://colab.research.google.com/github/Sage/talent-arena-2026/blob/session-2/notebooks/workshop.ipynb)
+AI is no longer just about asking good questions—it’s about creating systems that can think, act, and collaborate.  In this hands-on workshop, you’ll learn what AI agents really are, how they work, and how to design your own. No PhD required. By the end, you’ll understand how agents reason, use tools, and make decisions—and you’ll prototype one yourself. Perfect for builders, product people, founders, and curious minds who want to move beyond ChatGPT and into agentic AI. 
