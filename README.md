@@ -1,2 +1,5 @@
 ## 🚀 Session 2 - Giving AI Agents Superpowers: Connecting Them to the Real World with MCP 
+
 AI agents become truly powerful when they can safely interact with real systems—files, databases, APIs, and internal tools.  In this workshop, you’ll learn how the Model Context Protocol (MCP) turns agents into first-class operators inside your ecosystem. We’ll demystify MCP, show why it matters, and build agents that can actually do things, not just talk about them. 
+
+[Open in Colab](https://colab.research.google.com/github/Sage/talent-arena-2026/blob/session-2/notebooks/workshop.ipynb)
