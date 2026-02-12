@@ -26,8 +26,12 @@ curl-cffi==0.13.0
     # via yfinance
 ddgs==9.10.0
     # via talent-arena-2026 (pyproject.toml)
+dotenv==0.9.9
+    # via talent-arena-2026 (pyproject.toml)
 fake-useragent==2.2.0
     # via ddgs
+freeflow-llm==0.1.3
+    # via talent-arena-2026 (pyproject.toml)
 frozendict==2.4.7
     # via yfinance
 h11==0.16.0
@@ -42,6 +46,7 @@ httpx==0.28.1
     # via
     #   talent-arena-2026 (pyproject.toml)
     #   ddgs
+    #   freeflow-llm
 hyperframe==6.1.0
     # via h2
 idna==3.11
@@ -81,6 +86,10 @@ pytest==9.0.2
     # via talent-arena-2026 (pyproject.toml)
 python-dateutil==2.9.0.post0
     # via pandas
+python-dotenv==1.2.1
+    # via
+    #   dotenv
+    #   freeflow-llm
 pytz==2025.2
     # via yfinance
 requests==2.32.5

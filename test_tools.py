@@ -1,6 +1,6 @@
 import pytest
 
-from utils import Tools
+from lab import Tools
 
 
 @pytest.fixture
