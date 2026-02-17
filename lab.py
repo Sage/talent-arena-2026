@@ -48,9 +48,14 @@ class FreeFlowLLM:
             >>> print(response)
             '4'
         """
-        with FreeFlowClient() as client:
-            response = client.chat(messages=messages)
-            return response.content
+        try:
+            with FreeFlowClient() as client:
+                response = client.chat(messages=messages)
+                return response.content
+        except Exception as e:
+            error_msg = f"LLM API Error: {str(e)}"
+            print(f"⚠️  {error_msg}")
+            raise RuntimeError(error_msg) from e
 
     def stream(self, messages):
         """
@@ -70,11 +75,16 @@ class FreeFlowLLM:
             >>> for chunk in llm.stream([{"role": "user", "content": "Tell me a story"}]):
             ...     print(chunk, end="", flush=True)
         """
-        with FreeFlowClient() as client:
-            stream = client.chat_stream(messages=messages)
-            for chunk in stream:
-                if chunk.content:
-                    yield chunk.content
+        try:
+            with FreeFlowClient() as client:
+                stream = client.chat_stream(messages=messages)
+                for chunk in stream:
+                    if chunk.content:
+                        yield chunk.content
+        except Exception as e:
+            error_msg = f"LLM Streaming Error: {str(e)}"
+            print(f"⚠️  {error_msg}")
+            yield f"\n[Error: {error_msg}]\n"
 
 
 # ============================================================
@@ -216,46 +226,74 @@ class ReActEngine:
                         Final Answer:
                         """
 
-        for _ in range(self.max_iterations):
-            messages = [
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": f"Question: {user_input}\n\n{scratchpad}"},
-            ]
-            llm_output = self.llm(messages)
-            parsed = self._parse(llm_output)
+        for iteration in range(self.max_iterations):
+            try:
+                messages = [
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": f"Question: {user_input}\n\n{scratchpad}"},
+                ]
+                llm_output = self.llm(messages)
+                
+                try:
+                    parsed = self._parse(llm_output)
+                except ValueError as e:
+                    yield f"⚠️  Parse Error: {str(e)}\nLLM Output was: {llm_output}\n"
+                    continue
 
-            # Always yield the LLM output for visibility
-            yield f"LLM Output: {llm_output}\n"
+                # Always yield the LLM output for visibility
+                yield f"LLM Output: {llm_output}\n"
 
-            if parsed["type"] == "final":
-                yield f"Final Answer: {parsed['content']}\n"
-                if stream_final:
-                    stream_messages = [
-                        {
-                            "role": "system",
-                            "content": "Return only the final answer text.",
-                        },
-                        {"role": "user", "content": parsed["content"]},
-                    ]
-                    for chunk in self.llm.stream(stream_messages):
-                        yield chunk
+                if parsed["type"] == "final":
+                    yield f"Final Answer: {parsed['content']}\n"
+                    if stream_final:
+                        try:
+                            stream_messages = [
+                                {
+                                    "role": "system",
+                                    "content": "Return only the final answer text.",
+                                },
+                                {"role": "user", "content": parsed["content"]},
+                            ]
+                            for chunk in self.llm.stream(stream_messages):
+                                yield chunk
+                        except Exception as e:
+                            yield f"\n⚠️  Streaming error: {str(e)}\n"
+                    return
+
+                elif parsed["type"] == "action":
+                    tool_name = parsed["tool"]
+                    tool_input = parsed["input"]
+                    tool = getattr(self.tools, tool_name, None)
+                    
+                    if not tool:
+                        error_msg = f"Tool '{tool_name}' not found. Available tools: {self._tool_list()}"
+                        yield f"⚠️  {error_msg}\n"
+                        scratchpad += f"\nObservation: Error - {error_msg}\n"
+                        continue
+                    
+                    try:
+                        observation = tool(tool_input)
+                        step = f"Action: {tool_name}\nAction Input: {tool_input}\nObservation: {observation}\n"
+                        yield step
+                        scratchpad += f"""
+                                        Thought:
+                                        Action: {tool_name}
+                                        Action Input: {tool_input}
+                                        Observation: {observation}
+                                        """
+                    except Exception as e:
+                        error_msg = f"Tool execution failed: {str(e)}"
+                        yield f"⚠️  {error_msg}\n"
+                        scratchpad += f"\nObservation: Error - {error_msg}\n"
+                        
+            except RuntimeError as e:
+                yield f"⚠️  LLM Error on iteration {iteration + 1}: {str(e)}\n"
+                yield "Stopping due to LLM failure.\n"
                 return
-
-            elif parsed["type"] == "action":
-                tool_name = parsed["tool"]
-                tool_input = parsed["input"]
-                tool = getattr(self.tools, tool_name, None)
-                if not tool:
-                    raise ValueError(f"Tool {tool_name} not found")
-                observation = tool(tool_input)
-                step = f"Action: {tool_name}\nAction Input: {tool_input}\nObservation: {observation}\n"
-                yield step
-                scratchpad += f"""
-                                Thought:
-                                Action: {tool_name}
-                                Action Input: {tool_input}
-                                Observation: {observation}
-                                """
+            except Exception as e:
+                yield f"⚠️  Unexpected error on iteration {iteration + 1}: {str(e)}\n"
+                continue
+                
         yield "Max iterations reached without final answer.\n"
 
 
@@ -415,22 +453,29 @@ class Tools:
             >>> print(result)
             {'symbol': 'AAPL', 'price': 185.32, 'change': 2.14, 'percent_change': 1.17}
         """
-        ticker = self.yfinance.Ticker(symbol)
-        data = ticker.history(period="1d")
-        if data.empty:
-            return "No data found."
+        try:
+            if not symbol or not isinstance(symbol, str):
+                return "Error: Invalid symbol. Please provide a valid stock ticker (e.g., 'AAPL')."
+            
+            ticker = self.yfinance.Ticker(symbol.upper())
+            data = ticker.history(period="1d")
+            
+            if data.empty:
+                return f"No data found for '{symbol}'. The market may be closed or the symbol is invalid."
 
-        price = data["Close"].iloc[-1]
-        open_price = data["Open"].iloc[-1]
-        change = price - open_price
-        percent_change = (change / open_price) * 100
+            price = data["Close"].iloc[-1]
+            open_price = data["Open"].iloc[-1]
+            change = price - open_price
+            percent_change = (change / open_price) * 100
 
-        return {
-            "symbol": symbol,
-            "price": float(price),
-            "change": float(change),
-            "percent_change": float(percent_change),
-        }
+            return {
+                "symbol": symbol.upper(),
+                "price": float(price),
+                "change": float(change),
+                "percent_change": float(percent_change),
+            }
+        except Exception as e:
+            return f"Error fetching stock price for '{symbol}': {str(e)}"
 
     def search_news(self, query):
         """
@@ -453,7 +498,14 @@ class Tools:
             >>> news = tools.search_news("AI regulation Europe")
             >>> print(news[0]['title'])
         """
-        return list(self.DDGS().news(query, max_results=3))
+        try:
+            if not query or not isinstance(query, str):
+                return [{"title": "Error", "body": "Invalid search query. Please provide a search term."}]
+            
+            results = list(self.DDGS().news(query, max_results=3))
+            return results if results else [{"title": "No results", "body": f"No news found for '{query}'."}]
+        except Exception as e:
+            return [{"title": "Error", "body": f"News search failed: {str(e)}"}]
 
     def scrape_hacker_news(self):
         """
@@ -471,11 +523,24 @@ class Tools:
             >>> for title, url in stories:
             ...     print(f"{title}: {url}")
         """
-        url = "https://news.ycombinator.com/"
-        resp = self.requests.get(url)
-        soup = self.BeautifulSoup(resp.text, "html.parser")
-        links = soup.select(".titleline > a")
-        return [(a.text, a["href"]) for a in links[:3]]
+        try:
+            url = "https://news.ycombinator.com/"
+            resp = self.requests.get(url, timeout=10)
+            resp.raise_for_status()
+            
+            soup = self.BeautifulSoup(resp.text, "html.parser")
+            links = soup.select(".titleline > a")
+            
+            if not links:
+                return [("No stories found", "https://news.ycombinator.com/")]
+            
+            return [(a.text, a.get("href", "")) for a in links[:3]]
+        except self.requests.exceptions.Timeout:
+            return [("Error: Request timeout", "Check your internet connection")]
+        except self.requests.exceptions.RequestException as e:
+            return [(f"Error: Network error - {str(e)}", "")]
+        except Exception as e:
+            return [(f"Error: Scraping failed - {str(e)}", "")]
 
     def get_project_summary(self, query):
         """
@@ -499,7 +564,14 @@ class Tools:
             >>> result = tools.get_project_summary("Next.js 15")
             >>> print(result[0]['body'])
         """
-        return list(self.DDGS().text(query, max_results=1))
+        try:
+            if not query or not isinstance(query, str):
+                return [{"title": "Error", "body": "Invalid query. Please provide a search term."}]
+            
+            results = list(self.DDGS().text(query, max_results=1))
+            return results if results else [{"title": "No results", "body": f"No information found for '{query}'."}]
+        except Exception as e:
+            return [{"title": "Error", "body": f"Search failed: {str(e)}"}]
 
     def get_crypto_prices(self, symbols_csv):
         """
@@ -529,24 +601,45 @@ class Tools:
             >>> print(prices['BTC'])
             65432.10
         """
-        if isinstance(symbols_csv, str):
-            symbols = [s.strip().upper() for s in symbols_csv.split(",")]
-        elif isinstance(symbols_csv, list):
-            symbols = [s.strip().upper() for s in symbols_csv]
-        else:
-            raise TypeError("symbols_csv must be a string or list")
-        prices = {}
-
-        for symbol in symbols:
-            pair = f"{symbol}USDT"
-            url = f"https://api.binance.com/api/v3/ticker/price?symbol={pair}"
-            resp = self.requests.get(url)
-            if resp.status_code == 200:
-                prices[symbol] = float(resp.json()["price"])
+        try:
+            if isinstance(symbols_csv, str):
+                symbols = [s.strip().upper() for s in symbols_csv.split(",") if s.strip()]
+            elif isinstance(symbols_csv, list):
+                symbols = [s.strip().upper() for s in symbols_csv if isinstance(s, str) and s.strip()]
             else:
-                prices[symbol] = None
+                raise TypeError("symbols_csv must be a string or list")
+            
+            if not symbols:
+                return {"error": "No valid symbols provided"}
+            
+            prices = {}
 
-        return prices
+            for symbol in symbols:
+                try:
+                    pair = f"{symbol}USDT"
+                    url = f"https://api.binance.com/api/v3/ticker/price?symbol={pair}"
+                    resp = self.requests.get(url, timeout=10)
+                    
+                    if resp.status_code == 200:
+                        prices[symbol] = float(resp.json()["price"])
+                    else:
+                        prices[symbol] = None
+                        print(f"⚠️  Failed to fetch {symbol}: HTTP {resp.status_code}")
+                except (ValueError, KeyError) as e:
+                    prices[symbol] = None
+                    print(f"⚠️  Error parsing {symbol}: {str(e)}")
+                except self.requests.exceptions.Timeout:
+                    prices[symbol] = None
+                    print(f"⚠️  Timeout fetching {symbol}")
+                except Exception as e:
+                    prices[symbol] = None
+                    print(f"⚠️  Error fetching {symbol}: {str(e)}")
+
+            return prices
+        except TypeError as e:
+            return {"error": str(e)}
+        except Exception as e:
+            return {"error": f"Unexpected error: {str(e)}"}
 
     def generate_chart(self, price_dict):
         """
@@ -575,18 +668,46 @@ class Tools:
             >>> import webbrowser
             >>> webbrowser.open(chart_url)
         """
-        import json
+        try:
+            import json
+            
+            if not isinstance(price_dict, dict):
+                return "Error: Input must be a dictionary (e.g., {'BTC': 65000, 'ETH': 3500})"
+            
+            if not price_dict:
+                return "Error: Empty price dictionary provided"
+            
+            # Filter out None values and validate numeric data
+            filtered_data = {k: v for k, v in price_dict.items() if v is not None}
+            
+            if not filtered_data:
+                return "Error: No valid price data to chart"
+            
+            labels = list(filtered_data.keys())
+            data = []
+            
+            for value in filtered_data.values():
+                try:
+                    data.append(float(value))
+                except (ValueError, TypeError):
+                    return f"Error: Non-numeric value found in price data: {value}"
 
-        labels = list(price_dict.keys())
-        data = list(price_dict.values())
+            chart_config = {
+                "type": "bar",
+                "data": {
+                    "labels": labels,
+                    "datasets": [{"label": "Price (USDT)", "data": data}],
+                },
+            }
 
-        chart_config = {
-            "type": "bar",
-            "data": {
-                "labels": labels,
-                "datasets": [{"label": "Price (USDT)", "data": data}],
-            },
-        }
-
-        base_url = "https://quickchart.io/chart"
-        return f"{base_url}?c={self.requests.utils.quote(json.dumps(chart_config))}"
+            base_url = "https://quickchart.io/chart"
+            chart_url = f"{base_url}?c={self.requests.utils.quote(json.dumps(chart_config))}"
+            
+            # Validate URL length (QuickChart has limits)
+            if len(chart_url) > 16000:
+                return "Error: Chart data too large. Try with fewer items."
+            
+            return chart_url
+            
+        except Exception as e:
+            return f"Error generating chart: {str(e)}"
