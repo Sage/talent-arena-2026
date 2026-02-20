@@ -1,0 +1,106 @@
+CUSTOMER DATABASE SUMMARY - JANUARY 2026
+==========================================
+
+Report Generated: January 19, 2026
+Data as of: January 18, 2026, 23:59 UTC
+
+OVERALL STATISTICS
+------------------
+Total Active Customers: 12,458
+New Customers (Last 30 days): 847
+Churned Customers (Last 30 days): 123
+Customer Growth Rate: +5.8% MoM
+Average Customer Lifetime: 8.3 months
+
+CUSTOMER SEGMENTATION
+---------------------
+
+Enterprise Customers (>$50K annual):
+- Count: 45 customers
+- Revenue contribution: $3.2M (42% of total)
+- Average order size: $8,900
+- Average orders per year: 8.5
+- Key accounts: TechCorp, GlobalManufacturing Inc, DataCenters Ltd
+
+SMB Customers ($5K-$50K annual):
+- Count: 892 customers  
+- Revenue contribution: $2.8M (37% of total)
+- Average order size: $1,200
+- Average orders per year: 3.2
+
+Individual/Small Customers (<$5K annual):
+- Count: 11,521 customers
+- Revenue contribution: $1.6M (21% of total)
+- Average order size: $285
+- Average orders per year: 1.8
+
+GEOGRAPHIC DISTRIBUTION
+-----------------------
+EMEA: 4,890 customers (39%)
+Americas: 4,305 customers (35%)
+APAC: 3,263 customers (26%)
+
+TOP 10 CUSTOMERS BY REVENUE (2025)
+----------------------------------
+1. TechCorp International - $485,000
+2. GlobalManufacturing Inc - $392,000
+3. DataCenters Ltd - $318,000
+4. Industrial Solutions Group - $275,000
+5. SmartHome Innovations - $198,000
+6. AutoTech Systems - $167,000
+7. Healthcare Devices Co - $152,000
+8. Retail Solutions Plus - $143,000
+9. Manufacturing Systems Inc - $129,000
+10. Digital Enterprises SA - $116,000
+
+CUSTOMER SATISFACTION METRICS
+-----------------------------
+Overall NPS Score: +42 (Q4 2025)
+Customer Satisfaction: 4.2/5.0
+Support Response Time: 2.3 hours (avg)
+Issue Resolution Rate: 94%
+
+Top Satisfaction Drivers:
+- Product quality (4.6/5.0)
+- Shipping speed (4.3/5.0)
+- Documentation (4.2/5.0)
+
+Areas for Improvement:
+- Product availability (3.8/5.0) - stock issues
+- Price competitiveness (3.9/5.0)
+- Mobile app experience (3.7/5.0)
+
+CHURN ANALYSIS
+--------------
+Top Churn Reasons:
+1. Moved to competitor (38%)
+2. Price concerns (27%)
+3. Product discontinued (18%)
+4. Business closure (12%)
+5. Other/Unknown (5%)
+
+High Risk Customers (Likely to Churn):
+- 156 customers with no orders in 90+ days
+- 43 customers with recent negative feedback
+- 28 customers with payment issues
+
+CUSTOMER ACQUISITION
+--------------------
+Acquisition Channels (Last Quarter):
+- Direct/Organic: 342 customers (40%)
+- Paid Search: 271 customers (32%)
+- Referral Program: 152 customers (18%)
+- Social Media: 56 customers (7%)
+- Trade Shows: 26 customers (3%)
+
+Average Customer Acquisition Cost: $145
+Average Customer Lifetime Value: $1,240
+LTV:CAC Ratio: 8.6:1 (healthy)
+
+ACTIONABLE INSIGHTS
+-------------------
+1. Focus retention efforts on 156 at-risk customers
+2. Launch targeted win-back campaign for Q4 churned customers
+3. Expand referral program (best LTV:CAC ratio)
+4. Address stock availability issues impacting satisfaction
+5. Enterprise segment shows best margins - expand sales efforts

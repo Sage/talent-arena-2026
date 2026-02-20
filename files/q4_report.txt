@@ -1,0 +1,50 @@
+Q4 2025 BUSINESS PERFORMANCE REPORT
+=====================================
+
+Report Period: October 1 - December 31, 2025
+Report Date: January 15, 2026
+Prepared By: Finance Department
+
+EXECUTIVE SUMMARY
+-----------------
+Q4 2025 showed strong performance across all regions with total revenue of $2.4M,
+representing a 23% increase year-over-year. Electronics category led growth with
+Widget Pro and Cloud Connect products exceeding targets.
+
+KEY METRICS
+-----------
+- Total Revenue: $2,437,500
+- Total Units Sold: 8,450
+- Average Order Value: $288.46
+- Customer Satisfaction: 4.2/5.0
+- Return Rate: 2.1%
+
+TOP PERFORMING PRODUCTS
+-----------------------
+1. Widget Pro - $890,250 revenue (2,975 units)
+2. Cloud Connect - $674,955 revenue (4,500 units)
+3. Smart Sensor - $404,955 revenue (4,500 units)
+
+REGIONAL BREAKDOWN
+------------------
+- EMEA: $950,000 (39%)
+- Americas: $825,000 (34%)
+- APAC: $662,500 (27%)
+
+CHALLENGES
+----------
+- Supply chain delays for Widget Pro causing 2-week backorders
+- Increased competition in Smart Sensor category
+- Currency fluctuations impacting EMEA margins
+
+RECOMMENDATIONS
+---------------
+1. Increase Widget Pro inventory buffer from 150 to 300 units
+2. Launch marketing campaign for Smart Sensor differentiation
+3. Explore hedging strategies for EMEA transactions
+4. Consider bulk discount program for Cloud Connect enterprise customers
+
+FORECAST Q1 2026
+----------------
+Expected revenue range: $2.6M - $2.8M (+7-15% QoQ)
+New product launch: Super Tool Premium Edition scheduled for March

@@ -1,0 +1,127 @@
+INVENTORY ALERT REPORT - JANUARY 19, 2026
+===========================================
+
+Generated: 06:00 AM UTC
+Alert Threshold: <20% of target stock level OR <30 days supply
+
+🔴 CRITICAL ALERTS (Action Required Within 24 Hours)
+----------------------------------------------------
+
+Product: Widget Pro
+SKU: WP-2024-001
+Current Stock: 38 units
+Target Stock: 250 units
+Stock Level: 15% of target ⚠️
+Days of Supply: 12 days (at current sales rate)
+Reorder Status: PO #2026-0445 placed - ETA February 3
+Comments: High demand product. Backorder queue building (23 customers).
+         Consider expedited shipping for partial fulfillment.
+Action: Contact supplier for rush delivery of 100 units minimum.
+
+Product: Smart Sensor (Model SS-100)
+SKU: SS-100-2025
+Current Stock: 22 units
+Target Stock: 150 units
+Stock Level: 15% of target ⚠️
+Days of Supply: 8 days
+Reorder Status: URGENT - No PO placed yet!
+Comments: Critical stock situation. New orders stopped yesterday.
+Action: Emergency reorder needed. Approve expedited procurement.
+
+
+🟡 WARNING ALERTS (Action Required Within 7 Days)
+-------------------------------------------------
+
+Product: Gadget Plus
+SKU: GP-2023-012
+Current Stock: 28 units
+Target Stock: 100 units
+Stock Level: 28% of target
+Days of Supply: 18 days
+Reorder Status: PO #2026-0448 placed - ETA January 28
+Comments: Stock adequate for now. Monitor daily.
+Action: Standard reorder in progress, no action needed.
+
+Product: Super Tool (Replacement Batteries)
+SKU: ST-BAT-001
+Current Stock: 85 units
+Target Stock: 400 units
+Stock Level: 21% of target
+Days of Supply: 25 days
+Reorder Status: Pending - awaiting approval
+Comments: Accessory item but necessary for product function.
+Action: Approve reorder PO #2026-0451 this week.
+
+
+✅ ADEQUATE STOCK (Monitoring)
+------------------------------
+
+Product: Cloud Connect
+SKU: CC-2025-BASIC
+Current Stock: 842 units
+Target Stock: 1000 units
+Stock Level: 84% of target ✓
+Days of Supply: 95 days
+Reorder Status: Next reorder scheduled February 15
+Comments: Stock healthy. Popular product with steady demand.
+
+Product: Super Tool  
+SKU: ST-2024-PRO
+Current Stock: 445 units
+Target Stock: 500 units
+Stock Level: 89% of target ✓
+Days of Supply: 67 days
+Reorder Status: Routine reorder February 10
+Comments: Sales have slowed after holiday season. Stock adequate.
+
+
+AGED INVENTORY REPORT
+---------------------
+
+Items in warehouse >180 days:
+
+Product: Gadget Plus (Generation 1)
+SKU: GP-2021-001
+Stock: 67 units
+Age: 245 days
+Value: $13,393
+Recommendation: Liquidation sale or donate. Generation 2 replacement available.
+
+Product: Legacy Widget Adapters
+SKU: WP-ADAPT-OLD
+Stock: 156 units
+Age: 412 days
+Value: $2,340
+Recommendation: Obsolete. Recycle or disposal.
+
+
+SUPPLY CHAIN NOTES
+------------------
+
+Recent Issues:
+- Widget Pro supplier experiencing component shortages (silicon chips)
+- Smart Sensor production delayed due to quality issues at manufacturer
+- Shipping delays from Asia +5 days average (port congestion)
+
+Upcoming Changes:
+- New Smart Sensor supplier onboarding (backup source) - ETA March 2026
+- Widget Pro price increase from supplier: +8% effective March 1
+- Negotiating improved payment terms with Cloud Connect manufacturer
+
+RECOMMENDATIONS
+---------------
+
+IMMEDIATE (Today):
+1. ⚠️  Emergency procurement for Smart Sensor - call supplier directly
+2. ⚠️  Request expedited delivery for Widget Pro PO #2026-0445
+3. Put Widget Pro on "limited availability" status on website
+
+THIS WEEK:
+4. Approve Super Tool battery reorder PO #2026-0451
+5. Plan liquidation sale for Gadget Plus Generation 1 units
+6. Update sales team on Widget Pro constraints
+
+THIS MONTH:
+7. Review and increase safety stock targets for top products
+8. Evaluate backup supplier for Widget Pro (risk mitigation)
+9. Dispose of obsolete legacy adapter inventory

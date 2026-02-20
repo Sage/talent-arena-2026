@@ -116,12 +116,18 @@ class ReActEngine:
         ...     print(output)
     """
 
-    def __init__(self, llm, tools, max_iterations=5):
+    def __init__(self, llm, tools, max_iterations=10):
         self.llm = llm
         self.tools = tools
         self.max_iterations = max_iterations
 
     def _tool_list(self):
+        """Get formatted tool list with parameters if available."""
+        # Check if tools object has detailed documentation method
+        if hasattr(self.tools, 'get_tools_documentation'):
+            return self.tools.get_tools_documentation()
+        
+        # Fallback to simple list of tool names
         """
         Generate a formatted list of available tools for the LLM.
         
@@ -172,12 +178,22 @@ class ReActEngine:
 
         action_match = re.search(r"Action:\s*(.*)", output)
         input_match = re.search(r"Action Input:\s*(.*)", output)
+        # Check for Action FIRST (even if Final Answer appears - LLM might include both by mistake)
+        # action_match = re.search(r"Action:\s*(.*?)(?:\n|$)", output)
+        # input_match = re.search(r"Action Input:\s*(.*?)(?:\n|$)", output)
 
         if action_match and input_match:
             return {
                 "type": "action",
                 "tool": action_match.group(1).strip(),
                 "input": input_match.group(1).strip(),
+            }
+        
+        # Only check Final Answer if no Action was found
+        if "Final Answer:" in output:
+            return {
+                "type": "final",
+                "content": output.split("Final Answer:")[-1].strip(),
             }
 
         raise ValueError("Invalid LLM format")
