@@ -84,7 +84,7 @@ class FreeFlowLLM:
         except Exception as e:
             error_msg = f"LLM Streaming Error: {str(e)}"
             print(f"⚠️  {error_msg}")
-            yield f"\n[Error: {error_msg}]\n"
+            raise RuntimeError(error_msg) from e
 
 
 # ============================================================
