@@ -711,3 +711,293 @@ class Tools:
             
         except Exception as e:
             return f"Error generating chart: {str(e)}"
+
+
+# ============================================================
+# NOTEBOOK HELPERS
+# ============================================================
+
+
+def test_all_tools(verbose=True):
+    """
+    Test all available tools with sample inputs.
+    
+    Provides a quick way to verify that all tools are working and see
+    what kind of data they return. Perfect for notebook demonstrations.
+    
+    Args:
+        verbose (bool): If True, prints detailed output. If False, only shows summary.
+    
+    Returns:
+        dict: Test results for each tool with success/failure status.
+    
+    Examples:
+        >>> from lab import test_all_tools
+        >>> 
+        >>> # Run all tests with output
+        >>> results = test_all_tools()
+        >>> 
+        >>> # Quick check without verbose output
+        >>> results = test_all_tools(verbose=False)
+        >>> print(f"Passed: {sum(1 for r in results.values() if r['success'])}/6")
+    """
+    tools = Tools()
+    results = {}
+    
+    if verbose:
+        print("🧪 Testing All Tools")
+        print("=" * 70)
+    
+    # Test 1: Stock Price
+    test_name = "get_stock_price"
+    try:
+        result = tools.get_stock_price("AAPL")
+        success = isinstance(result, dict) and "price" in result
+        results[test_name] = {"success": success, "result": result}
+        if verbose:
+            status = "✅" if success else "❌"
+            print(f"\n{status} {test_name}('AAPL')")
+            if success:
+                print(f"   Price: ${result['price']:.2f} ({result['percent_change']:+.2f}%)")
+    except Exception as e:
+        results[test_name] = {"success": False, "error": str(e)}
+        if verbose:
+            print(f"\n❌ {test_name}: {e}")
+    
+    # Test 2: News Search
+    test_name = "search_news"
+    try:
+        result = tools.search_news("technology")
+        success = isinstance(result, list) and len(result) > 0
+        results[test_name] = {"success": success, "result": result}
+        if verbose:
+            status = "✅" if success else "❌"
+            print(f"\n{status} {test_name}('technology')")
+            if success and result:
+                print(f"   Found {len(result)} articles")
+    except Exception as e:
+        results[test_name] = {"success": False, "error": str(e)}
+        if verbose:
+            print(f"\n❌ {test_name}: {e}")
+    
+    # Test 3: Hacker News
+    test_name = "scrape_hacker_news"
+    try:
+        result = tools.scrape_hacker_news()
+        success = isinstance(result, list) and len(result) > 0
+        results[test_name] = {"success": success, "result": result}
+        if verbose:
+            status = "✅" if success else "❌"
+            print(f"\n{status} {test_name}()")
+            if success:
+                print(f"   Found {len(result)} trending stories")
+    except Exception as e:
+        results[test_name] = {"success": False, "error": str(e)}
+        if verbose:
+            print(f"\n❌ {test_name}: {e}")
+    
+    # Test 4: Project Summary
+    test_name = "get_project_summary"
+    try:
+        result = tools.get_project_summary("Python")
+        success = isinstance(result, list) and len(result) > 0
+        results[test_name] = {"success": success, "result": result}
+        if verbose:
+            status = "✅" if success else "❌"
+            print(f"\n{status} {test_name}('Python')")
+    except Exception as e:
+        results[test_name] = {"success": False, "error": str(e)}
+        if verbose:
+            print(f"\n❌ {test_name}: {e}")
+    
+    # Test 5: Crypto Prices
+    test_name = "get_crypto_prices"
+    try:
+        result = tools.get_crypto_prices("BTC,ETH")
+        success = isinstance(result, dict) and "BTC" in result
+        results[test_name] = {"success": success, "result": result}
+        if verbose:
+            status = "✅" if success else "❌"
+            print(f"\n{status} {test_name}('BTC,ETH')")
+            if success:
+                print(f"   BTC: ${result.get('BTC', 'N/A')}")
+    except Exception as e:
+        results[test_name] = {"success": False, "error": str(e)}
+        if verbose:
+            print(f"\n❌ {test_name}: {e}")
+    
+    # Test 6: Chart Generation
+    test_name = "generate_chart"
+    try:
+        result = tools.generate_chart({"Test": 100, "Data": 150})
+        success = isinstance(result, str) and result.startswith("https://")
+        results[test_name] = {"success": success, "result": result}
+        if verbose:
+            status = "✅" if success else "❌"
+            print(f"\n{status} {test_name}(dict)")
+            if success:
+                print(f"   URL: {result[:60]}...")
+    except Exception as e:
+        results[test_name] = {"success": False, "error": str(e)}
+        if verbose:
+            print(f"\n❌ {test_name}: {e}")
+    
+    if verbose:
+        print("\n" + "=" * 70)
+        passed = sum(1 for r in results.values() if r.get("success", False))
+        print(f"✅ Tests passed: {passed}/{len(results)}")
+        print("=" * 70)
+    
+    return results
+
+
+# ============================================================
+# PRE-BUILT EXAMPLE AGENTS
+# ============================================================
+
+
+class MarketIntelligenceAgent(BaseAgent):
+    """
+    Pre-built market intelligence agent for stock analysis.
+    
+    Analyzes stocks by fetching prices and searching for news when
+    there's significant price movement (>2% change).
+    
+    Examples:
+        >>> from lab import MarketIntelligenceAgent, Tools
+        >>> 
+        >>> agent = MarketIntelligenceAgent(Tools())
+        >>> for output in agent.run("AAPL"):
+        ...     print(output)
+    """
+    
+    @property
+    def system_prompt(self):
+        return """You are a Market Intelligence Specialist with expertise in equity markets.
+
+Your task when analyzing a stock:
+1. ALWAYS start by using get_stock_price to fetch the current price and change
+2. Examine the percentage change:
+   - If |change| > 2%: Use search_news to understand why
+   - If |change| <= 2%: Proceed directly to analysis
+3. Provide a professional briefing
+
+Available tools:
+- get_stock_price(symbol): Gets real-time stock data
+- search_news(query): Searches recent news articles
+
+Format your final answer as:
+
+**Stock Analysis: [SYMBOL]**
+- Current Price: $[price] ([+/-]X.XX%)
+- News Summary: [Brief summary if significant movement, or "No major news" if stable]
+- Market Sentiment: [Bullish/Bearish/Neutral] - [reasoning based on data]
+
+Guidelines:
+- Be factual and data-driven
+- Only search for news if the movement is significant (>2% absolute change)
+- Keep analysis concise but insightful
+- Support conclusions with data from tools"""
+
+
+class TechTrendDiscoveryAgent(BaseAgent):
+    """
+    Pre-built tech trend discovery agent.
+    
+    Scrapes Hacker News to identify trending topics and provides
+    analysis of why each trend matters for developers.
+    
+    Examples:
+        >>> from lab import TechTrendDiscoveryAgent, Tools
+        >>> 
+        >>> agent = TechTrendDiscoveryAgent(Tools())
+        >>> for output in agent.run("What's trending?"):
+        ...     print(output)
+    """
+    
+    @property
+    def system_prompt(self):
+        return """You are a Tech Trend Discovery Agent specializing in identifying emerging technologies.
+
+Your task:
+1. Use scrape_hacker_news() to get trending topics from the developer community
+2. Analyze the list and identify the top 3 most impactful or interesting stories
+3. For each story, provide:
+   - The headline
+   - Why it matters for developers or product teams
+   - Key technical insight or business implication
+
+Available tools:
+- scrape_hacker_news(): Gets trending stories from Hacker News
+- get_project_summary(query): Searches for additional context on topics
+- search_news(query): Finds recent news articles
+
+Format your final answer as:
+
+**Tech Trends Today**
+
+1. **[Story Title]**
+   - Why It Matters: [Impact on developers/product teams]
+   - Technical Insight: [Key takeaway]
+   
+2. **[Story Title]**
+   - Why It Matters: [Impact]
+   - Technical Insight: [Key takeaway]
+
+3. **[Story Title]**
+   - Why It Matters: [Impact]
+   - Technical Insight: [Key takeaway]
+
+Guidelines:
+- Focus on actionable insights
+- Explain technical concepts clearly
+- Prioritize stories with broad impact or novel approaches"""
+
+
+class CryptoPortfolioVisualizer(BaseAgent):
+    """
+    Pre-built crypto portfolio visualization agent.
+    
+    Fetches cryptocurrency prices and generates visual charts
+    using QuickChart.
+    
+    Examples:
+        >>> from lab import CryptoPortfolioVisualizer, Tools
+        >>> 
+        >>> agent = CryptoPortfolioVisualizer(Tools())
+        >>> for output in agent.run("BTC,ETH,SOL"):
+        ...     print(output)
+    """
+    
+    @property
+    def system_prompt(self):
+        return """You are a Crypto Portfolio Analyzer specializing in cryptocurrency markets.
+
+Your task:
+1. Parse the comma-separated crypto symbols from user input (e.g., "BTC,ETH,SOL")
+2. Use get_crypto_prices(symbols) to fetch current prices
+3. Use generate_chart(price_dict) to create a visual bar chart
+4. Provide a concise summary with the chart URL
+
+Available tools:
+- get_crypto_prices(symbols): Gets real-time crypto prices (comma-separated)
+- generate_chart(data_dict): Creates a chart URL from price data
+- search_news(query): Searches for crypto news (optional)
+
+Format your final answer as:
+
+**Crypto Portfolio Analysis**
+
+Current Prices:
+- [SYMBOL]: $[price]
+- [SYMBOL]: $[price]
+...
+
+📊 Portfolio Chart: [chart_URL]
+
+Brief Insight: [One sentence about the portfolio or market]
+
+Guidelines:
+- Always include the chart URL in your final answer
+- Keep price summaries concise
+- Chart is the main deliverable"""
