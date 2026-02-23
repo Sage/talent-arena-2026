@@ -119,12 +119,22 @@ class FileSystemMCPServer:
         
 
     def _is_path_allowed(self, path: str) -> bool:
-        """Check if path is within allowed directories."""
-        abs_path = os.path.abspath(path)
-        return any(
-            abs_path.startswith(os.path.abspath(allowed))
-            for allowed in self.allowed_paths
-        )
+        """
+        Check if path is within allowed directories.
+        
+        Security: Uses realpath to resolve symlinks and prevent traversal attacks.
+        """
+        try:
+            # Resolve symlinks and get canonical path
+            real_path = os.path.realpath(os.path.abspath(path))
+            for allowed in self.allowed_paths:
+                allowed_real = os.path.realpath(os.path.abspath(allowed))
+                # Check if the real path starts with the allowed path
+                if real_path.startswith(allowed_real + os.sep) or real_path == allowed_real:
+                    return True
+            return False
+        except (OSError, ValueError):
+            return False
 
     def _setup_handlers(self):
         @self.server.list_tools()

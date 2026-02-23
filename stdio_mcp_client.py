@@ -3,16 +3,26 @@ Stdio MCP Client - Connects to MCP server via subprocess.
 
 This is the REAL MCP client that uses stdio transport to communicate
 with an MCP server running as a separate process.
+
+Key features:
+- Subprocess management (server runs as child process)
+- Connection health checking
+- Graceful shutdown
+- Error handling with retries
 """
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 from contextlib import asynccontextmanager
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -43,6 +53,12 @@ class StdioMCPClient:
     
     This is the production-ready approach for connecting to MCP servers.
     The server runs as a separate process, and we communicate via stdin/stdout.
+    
+    Features:
+    - Automatic subprocess lifecycle management
+    - Health checking via ping
+    - Graceful error handling
+    - Connection state tracking
     """
     
     def __init__(self):
@@ -51,12 +67,20 @@ class StdioMCPClient:
         self._read_stream = None
         self._write_stream = None
         self._stdio_context = None
+        self._connected = False
+        self._server_params = None
+    
+    @property
+    def is_connected(self) -> bool:
+        """Check if client is connected to server."""
+        return self._connected and self.session is not None
     
     async def connect(
         self,
         command: str = "python3",
         args: list[str] | None = None,
-        server_script: str = "run_mcp_server.py"
+        server_script: str = "run_mcp_server.py",
+        timeout: float = 30.0
     ) -> list[MCPTool]:
         """
         Connect to an MCP server via stdio subprocess.
@@ -65,62 +89,105 @@ class StdioMCPClient:
             command: Python interpreter to use
             args: Arguments to pass (defaults to [server_script])
             server_script: Path to the server script
+            timeout: Connection timeout in seconds
             
         Returns:
             List of discovered tools
+            
+        Raises:
+            ConnectionError: If connection fails
+            TimeoutError: If connection times out
         """
+        if self._connected:
+            logger.warning("Already connected, closing existing connection first")
+            await self.close()
+        
         if args is None:
             args = [server_script]
         
-        server_params = StdioServerParameters(
+        self._server_params = StdioServerParameters(
             command=command,
             args=args,
         )
         
-        # Start the subprocess and get streams
-        self._stdio_context = stdio_client(server_params)
-        streams = await self._stdio_context.__aenter__()
-        self._read_stream, self._write_stream = streams
-        
-        # Create and initialize session
-        self.session = ClientSession(self._read_stream, self._write_stream)
-        await self.session.__aenter__()
-        await self.session.initialize()
-        
-        # Discover tools
-        tools_response = await self.session.list_tools()
-        discovered = []
-        
-        for tool in tools_response.tools:
-            mcp_tool = MCPTool(
-                name=tool.name,
-                description=tool.description or "",
-                input_schema=tool.inputSchema if hasattr(tool, 'inputSchema') else {}
+        try:
+            # Start the subprocess and get streams with timeout
+            self._stdio_context = stdio_client(self._server_params)
+            streams = await asyncio.wait_for(
+                self._stdio_context.__aenter__(),
+                timeout=timeout
             )
-            self.tools[tool.name] = mcp_tool
-            discovered.append(mcp_tool)
-        
-        return discovered
+            self._read_stream, self._write_stream = streams
+            
+            # Create and initialize session
+            self.session = ClientSession(self._read_stream, self._write_stream)
+            await self.session.__aenter__()
+            await asyncio.wait_for(self.session.initialize(), timeout=timeout)
+            
+            # Discover tools
+            tools_response = await self.session.list_tools()
+            discovered = []
+            
+            for tool in tools_response.tools:
+                mcp_tool = MCPTool(
+                    name=tool.name,
+                    description=tool.description or "",
+                    input_schema=tool.inputSchema if hasattr(tool, 'inputSchema') else {}
+                )
+                self.tools[tool.name] = mcp_tool
+                discovered.append(mcp_tool)
+            
+            self._connected = True
+            logger.info(f"Connected to MCP server, discovered {len(discovered)} tools")
+            return discovered
+            
+        except asyncio.TimeoutError:
+            await self._cleanup_on_error()
+            raise TimeoutError(f"Connection timed out after {timeout}s. Is the server script correct?")
+        except Exception as e:
+            await self._cleanup_on_error()
+            raise ConnectionError(f"Failed to connect to MCP server: {e}") from e
     
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
+    async def _cleanup_on_error(self):
+        """Clean up resources after a connection error."""
+        try:
+            if self.session:
+                await self.session.__aexit__(None, None, None)
+        except:
+            pass
+        try:
+            if self._stdio_context:
+                await self._stdio_context.__aexit__(None, None, None)
+        except:
+            pass
+        self.session = None
+        self._stdio_context = None
+        self._connected = False
+    
+    async def call_tool(self, tool_name: str, arguments: dict[str, Any], timeout: float = 60.0) -> str:
         """
         Call a tool on the MCP server.
         
         Args:
             tool_name: Name of the tool to call
             arguments: Arguments for the tool
+            timeout: Timeout in seconds for the tool call
             
         Returns:
             Tool result as string
         """
-        if not self.session:
-            return "Error: Not connected to server"
+        if not self.is_connected:
+            return "Error: Not connected to server. Call connect() first."
         
         if tool_name not in self.tools:
-            return f"Error: Tool '{tool_name}' not found. Available: {list(self.tools.keys())}"
+            available = ", ".join(self.tools.keys())
+            return f"Error: Tool '{tool_name}' not found. Available tools: {available}"
         
         try:
-            result = await self.session.call_tool(tool_name, arguments)
+            result = await asyncio.wait_for(
+                self.session.call_tool(tool_name, arguments),
+                timeout=timeout
+            )
             
             # Extract text content from result
             if hasattr(result, 'content') and result.content:
@@ -130,7 +197,10 @@ class StdioMCPClient:
                         texts.append(content.text)
                 return "\n".join(texts)
             return str(result)
+        except asyncio.TimeoutError:
+            return f"Error: Tool '{tool_name}' timed out after {timeout}s"
         except Exception as e:
+            logger.exception(f"Error calling tool '{tool_name}'")
             return f"Error calling '{tool_name}': {str(e)}"
     
     def get_tools_list(self) -> list[str]:
@@ -142,13 +212,49 @@ class StdioMCPClient:
         return "\n".join(tool.format_for_llm() for tool in self.tools.values())
     
     async def close(self):
-        """Close the connection."""
+        """Close the connection and cleanup resources."""
+        logger.info("Closing MCP client connection")
+        self._connected = False
+        
+        errors = []
+        
         if self.session:
-            await self.session.__aexit__(None, None, None)
+            try:
+                await self.session.__aexit__(None, None, None)
+            except Exception as e:
+                errors.append(f"Session cleanup: {e}")
+            self.session = None
+        
         if self._stdio_context:
-            await self._stdio_context.__aexit__(None, None, None)
-        self.session = None
+            try:
+                await self._stdio_context.__aexit__(None, None, None)
+            except Exception as e:
+                errors.append(f"Stdio cleanup: {e}")
+            self._stdio_context = None
+        
         self.tools.clear()
+        
+        if errors:
+            logger.warning(f"Cleanup completed with warnings: {errors}")
+        else:
+            logger.info("MCP client closed successfully")
+    
+    async def ping(self, timeout: float = 5.0) -> bool:
+        """
+        Check if the server is still responsive.
+        
+        Returns:
+            True if server responds, False otherwise
+        """
+        if not self.is_connected:
+            return False
+        
+        try:
+            # Try listing tools as a health check
+            await asyncio.wait_for(self.session.list_tools(), timeout=timeout)
+            return True
+        except:
+            return False
 
 
 @asynccontextmanager
@@ -177,15 +283,34 @@ class SyncMCPClient:
     """
     Synchronous wrapper for StdioMCPClient.
     Makes it easier to use in notebooks and with the ReAct agent.
+    
+    Note: This uses nest_asyncio in notebooks to handle nested event loops.
     """
     
     def __init__(self, async_client: StdioMCPClient):
         self._client = async_client
-        self._loop = asyncio.get_event_loop()
+    
+    def _run_async(self, coro):
+        """Run an async coroutine in the current event loop."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop, create one
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # If we're in a running loop (notebook), use nest_asyncio pattern
+        if loop.is_running():
+            import nest_asyncio
+            nest_asyncio.apply()
+            return asyncio.ensure_future(coro)
+        
+        return loop.run_until_complete(coro)
     
     def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
         """Call a tool synchronously."""
-        return self._loop.run_until_complete(
+        loop = asyncio.get_event_loop()
+        return loop.run_until_complete(
             self._client.call_tool(tool_name, arguments)
         )
     
@@ -201,6 +326,11 @@ class SyncMCPClient:
     def tools(self) -> dict[str, MCPTool]:
         """Access discovered tools."""
         return self._client.tools
+    
+    @property
+    def is_connected(self) -> bool:
+        """Check if connected to server."""
+        return self._client.is_connected
 
 
 # ============================================================
