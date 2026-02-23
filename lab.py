@@ -2,6 +2,7 @@
 Reusable ReAct Agent Framework using FreeFlow LLM
 """
 
+import inspect
 import re
 
 from dotenv import load_dotenv
@@ -124,8 +125,8 @@ class ReActEngine:
         """
         Generate a formatted list of available tools for the LLM.
         
-        Dynamically inspects the tools object to find all callable methods
-        that don't start with underscore (public methods).
+        Dynamically inspects the tools object to find all public methods
+        (bound methods only, excluding imported classes/modules).
         
         Returns:
             str: Newline-separated list of tool names prefixed with dashes.
@@ -134,7 +135,7 @@ class ReActEngine:
         return "\n".join(
             f"- {name}"
             for name in dir(self.tools)
-            if not name.startswith("_") and callable(getattr(self.tools, name))
+            if not name.startswith("_") and inspect.ismethod(getattr(self.tools, name))
         )
 
     def _parse(self, output: str):
@@ -237,7 +238,17 @@ class ReActEngine:
                 try:
                     parsed = self._parse(llm_output)
                 except ValueError as e:
-                    yield f"⚠️  Parse Error: {str(e)}\nLLM Output was: {llm_output}\n"
+                    error_msg = f"⚠️  Parse Error: {str(e)}\nLLM Output was: {llm_output}\n"
+                    yield error_msg
+                    
+                    # Add actionable feedback to scratchpad so LLM can self-correct
+                    scratchpad += f"\nObservation: Your output format was incorrect. {str(e)}\n"
+                    scratchpad += "Remember to use EXACTLY this format:\n"
+                    scratchpad += "Thought: [your reasoning]\n"
+                    scratchpad += "Action: [tool_name]\n"
+                    scratchpad += "Action Input: [input_value]\n"
+                    scratchpad += "OR if you have the final answer:\n"
+                    scratchpad += "Final Answer: [your answer]\n"
                     continue
 
                 # Always yield the LLM output for visibility
@@ -265,7 +276,8 @@ class ReActEngine:
                     tool_input = parsed["input"]
                     tool = getattr(self.tools, tool_name, None)
                     
-                    if not tool:
+                    # Verify the tool exists and is a bound method (not a class attribute)
+                    if not tool or not inspect.ismethod(tool):
                         error_msg = f"Tool '{tool_name}' not found. Available tools: {self._tool_list()}"
                         yield f"⚠️  {error_msg}\n"
                         scratchpad += f"\nObservation: Error - {error_msg}\n"
@@ -585,21 +597,35 @@ class Tools:
                                        (e.g., ["BTC", "ETH", "SOL"]).
         
         Returns:
-            dict: Dictionary mapping symbols to their current prices in USDT.
-                  Returns None for symbols that fail to fetch.
-        
-        Raises:
-            TypeError: If symbols_csv is neither string nor list.
+            dict: Dictionary with one of the following structures:
+                  
+                  Success case:
+                  - Maps symbols to their current prices in USDT (float)
+                  - Failed individual symbols have None as their value
+                  - Example: {'BTC': 65432.10, 'ETH': 3521.45, 'INVALID': None}
+                  
+                  Error cases (dict with 'error' key):
+                  - {'error': 'No valid symbols provided'} - Empty/invalid input
+                  - {'error': 'symbols_csv must be a string or list'} - Wrong type
+                  - {'error': 'Unexpected error: ...'} - Other failures
+                  
+                  To check for errors: use 'error' in result
         
         Examples:
             >>> tools = Tools()
             >>> prices = tools.get_crypto_prices("BTC,ETH,SOL")
-            >>> print(prices)
+            >>> if 'error' in prices:
+            ...     print(f"Error: {prices['error']}")
+            ... else:
+            ...     print(prices)
             {'BTC': 65432.10, 'ETH': 3521.45, 'SOL': 142.89}
             
-            >>> prices = tools.get_crypto_prices(["BTC", "ETH"])
-            >>> print(prices['BTC'])
-            65432.10
+            >>> # Handle individual failures
+            >>> prices = tools.get_crypto_prices("BTC,INVALID")
+            >>> if 'error' not in prices:
+            ...     btc = prices.get('BTC')
+            ...     if btc is not None:
+            ...         print(f"BTC: ${btc}")
         """
         try:
             if isinstance(symbols_csv, str):
