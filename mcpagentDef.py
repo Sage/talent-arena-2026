@@ -1,4 +1,4 @@
-from lab import FreeFlowLLM, ReActEngine
+from lab import get_llm, ReActEngine
 from stdio_mcp_client import SyncMCPClient
 import json
 class MCPAgent:
@@ -9,7 +9,7 @@ class MCPAgent:
     
     def __init__(self, mcp_client: SyncMCPClient):
         self.client = mcp_client
-        self.llm = FreeFlowLLM()
+        self.llm = get_llm()
         
         # Create tools wrapper for ReAct engine
         self.tools = self._create_tools_wrapper()

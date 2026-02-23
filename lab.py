@@ -3,8 +3,14 @@ Reusable ReAct Agent Framework using FreeFlow LLM
 """
 
 import inspect
+import json
+import os
 import re
 
+import boto3
+import requests
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
 from dotenv import load_dotenv
 from freeflow_llm import FreeFlowClient
 
@@ -13,6 +19,105 @@ load_dotenv()
 # ============================================================
 # LLM WRAPPER
 # ============================================================
+
+
+class BedrockBridge:
+    """
+    Bridge to connect to Sage Bedrock via API Gateway with IAM authentication.
+    """
+
+    def __init__(self, api_url=None, profile=None, region=None):
+        """
+        Initialize BedrockBridge.
+        
+        Args:
+            api_url: API Gateway URL (defaults to BEDROCK_API_URL env var)
+            profile: AWS profile name (optional)
+            region: AWS region (optional, will be inferred from URL or env)
+        """
+        self.api_url = api_url or os.getenv("BEDROCK_API_URL")
+        if not self.api_url:
+            raise ValueError("BEDROCK_API_URL must be provided or set in environment")
+        
+        # Get API password from environment
+        self.api_password = os.getenv("API_PASSWORD")
+        if not self.api_password:
+            raise ValueError("API_PASSWORD must be set in environment")
+        
+        # Setup AWS session and credentials
+        self.session = boto3.Session(profile_name=profile) if profile else boto3.Session()
+        self.credentials = self.session.get_credentials()
+        if not self.credentials:
+            raise ValueError("No AWS credentials found. Run 'aws configure' or 'aws sso login'")
+        
+        # Determine region
+        if not region:
+            if "eu-west-1" in self.api_url:
+                region = "eu-west-1"
+            elif "us-east-1" in self.api_url:
+                region = "us-east-1"
+            else:
+                region = os.getenv("AWS_REGION", "us-east-1")
+        self.region = region
+        
+        self.endpoint = f"{self.api_url.rstrip('/')}/v1/query"
+
+    def _sign_request(self, payload):
+        """Sign the request with AWS SigV4."""
+        headers = {
+            "Content-Type": "application/json",
+            "X-API-Password": self.api_password
+        }
+        
+        request = AWSRequest(
+            method="POST",
+            url=self.endpoint,
+            data=json.dumps(payload),
+            headers=headers
+        )
+        SigV4Auth(self.credentials, "execute-api", self.region).add_auth(request)
+        return dict(request.headers), request.body
+
+    def _convert_messages_to_prompt(self, messages):
+        """Convert messages format to a single prompt string."""
+        # Combine system and user messages into a single prompt
+        prompt_parts = []
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if role == "system":
+                prompt_parts.append(f"System: {content}")
+            elif role == "user":
+                prompt_parts.append(f"User: {content}")
+            elif role == "assistant":
+                prompt_parts.append(f"Assistant: {content}")
+        return "\n\n".join(prompt_parts)
+
+    def __call__(self, messages):
+        """Call the API with messages and return the response."""
+        prompt = self._convert_messages_to_prompt(messages)
+        payload = {"prompt": prompt}
+        
+        headers, body = self._sign_request(payload)
+        
+        response = requests.post(
+            self.endpoint,
+            headers=headers,
+            data=body
+        )
+        
+        if not response.ok:
+            raise Exception(f"API Error {response.status_code}: {response.text}")
+        
+        data = response.json()
+        return data.get("response", "")
+
+    def stream(self, messages):
+        """Stream the API response (note: this may not support streaming)."""
+        # Most Lambda APIs don't support streaming, so we'll return the full response
+        response = self(messages)
+        # Simulate streaming by yielding the full response
+        yield response
 
 
 class FreeFlowLLM:
@@ -86,6 +191,31 @@ class FreeFlowLLM:
             error_msg = f"LLM Streaming Error: {str(e)}"
             print(f"⚠️  {error_msg}")
             raise RuntimeError(error_msg) from e
+
+
+def get_llm():
+    """
+    Factory function to create the appropriate LLM based on environment configuration.
+    
+    Set USE_BEDROCK=true in your .env file to use BedrockBridge.
+    Otherwise, defaults to FreeFlowLLM.
+    
+    Required environment variables for BedrockBridge:
+    - USE_BEDROCK=true
+    - BEDROCK_API_URL=https://your-api-url.execute-api.region.amazonaws.com
+    - API_PASSWORD=your-password
+    - Optional: AWS_PROFILE, AWS_REGION
+    """
+    use_bedrock = os.getenv("USE_BEDROCK", "true").lower() in ("true", "1", "yes")
+    
+    if use_bedrock:
+        print("🔧 Using BedrockBridge for LLM calls")
+        profile = os.getenv("AWS_PROFILE")
+        region = os.getenv("AWS_REGION")
+        return BedrockBridge(profile=profile, region=region)
+    else:
+        print("🔧 Using FreeFlowLLM for LLM calls")
+        return FreeFlowLLM()
 
 
 # ============================================================
@@ -356,7 +486,7 @@ class BaseAgent:
 
     def __init__(self, tools):
         self.tools = tools
-        self.llm = FreeFlowLLM()
+        self.llm = get_llm()
         self.engine = ReActEngine(self.llm, tools)
 
     @property
