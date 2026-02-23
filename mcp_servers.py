@@ -753,7 +753,10 @@ class CombinedMCPServer:
         self,
         allowed_paths: list[str] | None = None,
         db_connection: sqlite3.Connection | None = None,
-        output_dir: str | None = None
+        output_dir: str | None = None,
+        enable_filesystem: bool = True,
+        enable_database: bool = True,
+        enable_actions: bool = True
     ):
         self.server = Server("workshop-mcp-server")
         
@@ -765,139 +768,173 @@ class CombinedMCPServer:
         self.notifications_log: list[dict] = []
         self.tasks_log: list[dict] = []
         
+        # Track which tool packs are enabled
+        self.enable_filesystem = enable_filesystem
+        self.enable_database = enable_database
+        self.enable_actions = enable_actions
+        
         # Create instances for delegation
-        self.fs = FileSystemMCPServer(self.allowed_paths)
-        self.db = DatabaseMCPServer(self.conn)
-        self.actions = ActionsMCPServer(str(self.output_dir))
+        self.fs = FileSystemMCPServer(self.allowed_paths) if enable_filesystem else None
+        self.db = DatabaseMCPServer(self.conn) if enable_database else None
+        self.actions = ActionsMCPServer(str(self.output_dir)) if enable_actions else None
         
         self._setup_handlers()
 
     def _setup_handlers(self):
+        # Store references for closures
+        enable_fs = self.enable_filesystem
+        enable_db = self.enable_database
+        enable_act = self.enable_actions
+        
         @self.server.list_tools()
         async def list_tools() -> list[Tool]:
-            # Combine tools from all servers
-            fs_tools = [
-                Tool(
-                    name="read_file",
-                    description="Read the contents of a file. Returns the text content.",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "path": {"type": "string", "description": "Path to the file to read"},
-                            "max_lines": {"type": "integer", "description": "Maximum lines to read"}
-                        },
-                        "required": ["path"]
-                    }
-                ),
-                Tool(
-                    name="list_directory",
-                    description="List files and folders in a directory.",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "path": {"type": "string", "description": "Path to directory"},
-                            "pattern": {"type": "string", "description": "Glob pattern", "default": "*"}
-                        },
-                        "required": ["path"]
-                    }
-                ),
-            ]
+            all_tools = []
             
-            db_tools = [
-                Tool(
-                    name="query_products",
-                    description="Query products database. Filter by category, price range, or search name.",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "category": {"type": "string"},
-                            "min_price": {"type": "number"},
-                            "max_price": {"type": "number"},
-                            "search": {"type": "string"}
+            # Filesystem tools
+            if enable_fs:
+                all_tools.extend([
+                    Tool(
+                        name="read_file",
+                        description="Read the contents of a file. Returns the text content.",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string", "description": "Path to the file to read"},
+                                "max_lines": {"type": "integer", "description": "Maximum lines to read"}
+                            },
+                            "required": ["path"]
                         }
-                    }
-                ),
-                Tool(
-                    name="query_sales",
-                    description="Query sales data by region, date range, or product.",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "region": {"type": "string"},
-                            "product_id": {"type": "integer"},
-                            "start_date": {"type": "string"},
-                            "end_date": {"type": "string"}
+                    ),
+                    Tool(
+                        name="list_directory",
+                        description="List files and folders in a directory.",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string", "description": "Path to directory"},
+                                "pattern": {"type": "string", "description": "Glob pattern", "default": "*"}
+                            },
+                            "required": ["path"]
                         }
-                    }
-                ),
-                Tool(
-                    name="get_analytics",
-                    description="Get analytics: revenue, top_products, sales_by_region, inventory_value.",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "metric": {"type": "string", "enum": ["revenue", "top_products", "sales_by_region", "inventory_value"]}
-                        },
-                        "required": ["metric"]
-                    }
-                ),
-            ]
+                    ),
+                    Tool(
+                        name="get_file_info",
+                        description="Get metadata about a file (size, modification time, etc).",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string", "description": "Path to the file"}
+                            },
+                            "required": ["path"]
+                        }
+                    ),
+                ])
             
-            action_tools = [
-                Tool(
-                    name="generate_report",
-                    description="Generate and save a markdown report.",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "title": {"type": "string"},
-                            "content": {"type": "string"},
-                            "filename": {"type": "string"}
-                        },
-                        "required": ["title", "content"]
-                    }
-                ),
-                Tool(
-                    name="send_notification",
-                    description="Send notification to slack/email/teams (simulated).",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "channel": {"type": "string", "enum": ["slack", "email", "teams"]},
-                            "recipient": {"type": "string"},
-                            "message": {"type": "string"},
-                            "priority": {"type": "string", "enum": ["low", "medium", "high"]}
-                        },
-                        "required": ["channel", "recipient", "message"]
-                    }
-                ),
-                Tool(
-                    name="create_task",
-                    description="Create a task/todo item.",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "title": {"type": "string"},
-                            "description": {"type": "string"},
-                            "assignee": {"type": "string"},
-                            "due_date": {"type": "string"},
-                            "priority": {"type": "string", "enum": ["low", "medium", "high", "critical"]}
-                        },
-                        "required": ["title"]
-                    }
-                ),
-            ]
+            # Database tools
+            if enable_db:
+                all_tools.extend([
+                    Tool(
+                        name="query_products",
+                        description="Query products database. Filter by category, price range, or search name.",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "category": {"type": "string", "description": "Filter by category (Electronics, Hardware, IoT, Software)"},
+                                "min_price": {"type": "number", "description": "Minimum price filter"},
+                                "max_price": {"type": "number", "description": "Maximum price filter"},
+                                "search": {"type": "string", "description": "Search term for product name"}
+                            }
+                        }
+                    ),
+                    Tool(
+                        name="query_sales",
+                        description="Query sales data by region, date range, or product.",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "region": {"type": "string", "description": "Filter by region (EMEA, Americas, APAC)"},
+                                "product_id": {"type": "integer", "description": "Filter by product ID"},
+                                "start_date": {"type": "string", "description": "Start date (YYYY-MM-DD)"},
+                                "end_date": {"type": "string", "description": "End date (YYYY-MM-DD)"}
+                            }
+                        }
+                    ),
+                    Tool(
+                        name="get_analytics",
+                        description="Get analytics: revenue, top_products, sales_by_region, inventory_value.",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "metric": {"type": "string", "enum": ["revenue", "top_products", "sales_by_region", "inventory_value"], "description": "The analytics metric to retrieve"}
+                            },
+                            "required": ["metric"]
+                        }
+                    ),
+                ])
             
-            return fs_tools + db_tools + action_tools
+            # Action tools
+            if enable_act:
+                all_tools.extend([
+                    Tool(
+                        name="generate_report",
+                        description="Generate and save a markdown report.",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "title": {"type": "string", "description": "Report title"},
+                                "content": {"type": "string", "description": "Report content (can include markdown)"},
+                                "filename": {"type": "string", "description": "Output filename (without extension)"}
+                            },
+                            "required": ["title", "content"]
+                        }
+                    ),
+                    Tool(
+                        name="send_notification",
+                        description="Send notification to slack/email/teams (simulated).",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "channel": {"type": "string", "enum": ["slack", "email", "teams"], "description": "Notification channel"},
+                                "recipient": {"type": "string", "description": "Recipient (email or channel name)"},
+                                "message": {"type": "string", "description": "Notification message"},
+                                "priority": {"type": "string", "enum": ["low", "medium", "high"], "description": "Priority level"}
+                            },
+                            "required": ["channel", "recipient", "message"]
+                        }
+                    ),
+                    Tool(
+                        name="create_task",
+                        description="Create a task/todo item.",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "title": {"type": "string", "description": "Task title"},
+                                "description": {"type": "string", "description": "Task description"},
+                                "assignee": {"type": "string", "description": "Person assigned to the task"},
+                                "due_date": {"type": "string", "description": "Due date (YYYY-MM-DD)"},
+                                "priority": {"type": "string", "enum": ["low", "medium", "high", "critical"], "description": "Priority level"}
+                            },
+                            "required": ["title"]
+                        }
+                    ),
+                ])
+            
+            return all_tools
 
         @self.server.call_tool()
         async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             # Route to appropriate handler
             if name in ["read_file", "list_directory", "get_file_info"]:
+                if not enable_fs:
+                    return [TextContent(type="text", text=f"Tool '{name}' not available (filesystem pack not enabled)")]
                 return await self._handle_fs(name, arguments)
             elif name in ["query_products", "query_sales", "get_analytics"]:
+                if not enable_db:
+                    return [TextContent(type="text", text=f"Tool '{name}' not available (database pack not enabled)")]
                 return await self._handle_db(name, arguments)
             elif name in ["generate_report", "send_notification", "create_task", "get_action_log"]:
+                if not enable_act:
+                    return [TextContent(type="text", text=f"Tool '{name}' not available (actions pack not enabled)")]
                 return await self._handle_actions(name, arguments)
             else:
                 return [TextContent(type="text", text=f"Unknown tool: {name}")]

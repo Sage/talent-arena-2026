@@ -1,11 +1,24 @@
 """
-Reusable ReAct Agent Framework using FreeFlow LLM
+MCP Workshop Lab - AI Agents & Model Context Protocol
+
+This module provides:
+1. LLM Wrappers (BedrockBridge, FreeFlowLLM)
+2. ReAct Agent Engine
+3. Traditional coupled tools (Tools class)
+4. AI Agent that can work with coupled tools OR MCP servers
+5. MCPServerBuilder for easy MCP server creation
+6. Pre-defined tool packs (filesystem, database, actions)
 """
 
+import asyncio
 import inspect
 import json
 import os
 import re
+import subprocess
+import sys
+from dataclasses import dataclass
+from typing import Any, Callable
 
 import boto3
 import requests
@@ -15,6 +28,13 @@ from dotenv import load_dotenv
 from freeflow_llm import FreeFlowClient
 
 load_dotenv()
+
+# Apply nest_asyncio for notebook compatibility
+try:
+    import nest_asyncio
+    nest_asyncio.apply()
+except ImportError:
+    pass
 
 # ============================================================
 # LLM WRAPPER
@@ -1044,3 +1064,528 @@ def test_all_tools(verbose=True):
         print("=" * 70)
     
     return results
+
+# ============================================================
+# AI AGENT - Works with coupled tools OR MCP servers
+# ============================================================
+
+
+class AIAgent:
+    """
+    AI Agent that can use either:
+    1. Coupled tools (traditional approach - tools are tightly bound)
+    2. MCP tools (decoupled approach - tools come from external servers)
+    
+    This demonstrates the difference between coupled and decoupled architectures.
+    """
+    
+    def __init__(self, tools=None, name: str = "AI Agent"):
+        """
+        Initialize the AI Agent.
+        
+        Args:
+            tools: A tools object with callable methods. Can be:
+                   - Tools instance (coupled)
+                   - MCPToolsWrapper instance (decoupled via MCP)
+                   - None (no tools available)
+            name: Display name for the agent
+        """
+        self.name = name
+        self.tools = tools
+        self.llm = get_llm()
+        self._engine = None
+        if tools:
+            self._engine = ReActEngine(self.llm, tools)
+    
+    @property
+    def system_prompt(self) -> str:
+        return """You are a helpful AI assistant. Answer questions accurately and concisely.
+        
+When you need to use a tool, respond with this EXACT format:
+
+Thought: [your reasoning about what to do]
+Action: [tool name]
+Action Input: [JSON object with the parameters]
+
+After receiving the Observation (tool result), either:
+- Use another tool if needed
+- OR provide your Final Answer:
+
+Final Answer: [your answer to the user]
+
+IMPORTANT:
+- Always use valid JSON for Action Input
+- Wait for Observation before continuing
+- When you have enough information, give a Final Answer
+"""
+    
+    def get_tools_list(self) -> list[str]:
+        """Get list of available tool names."""
+        if not self.tools:
+            return []
+        
+        if hasattr(self.tools, 'get_tools_list'):
+            return self.tools.get_tools_list()
+        
+        # Fallback: introspect the tools object
+        return [
+            name for name in dir(self.tools)
+            if not name.startswith("_") and callable(getattr(self.tools, name))
+        ]
+    
+    def get_tools_documentation(self) -> str:
+        """Get formatted documentation for all tools."""
+        if not self.tools:
+            return "(No tools available)"
+        
+        if hasattr(self.tools, 'get_tools_documentation'):
+            return self.tools.get_tools_documentation()
+        
+        # Fallback: generate basic documentation
+        tool_docs = []
+        for name in self.get_tools_list():
+            method = getattr(self.tools, name)
+            doc = method.__doc__ or "No description"
+            tool_docs.append(f"- {name}: {doc.strip().split(chr(10))[0]}")
+        return "\n".join(tool_docs)
+    
+    def show_tools(self):
+        """Display the agent's available tools."""
+        tools = self.get_tools_list()
+        print(f"🤖 {self.name}")
+        print(f"{'=' * 50}")
+        if tools:
+            print(f"📦 Available Tools ({len(tools)}):")
+            for tool in tools:
+                print(f"   • {tool}")
+            print(f"\n📋 Tool Documentation:")
+            print(self.get_tools_documentation())
+        else:
+            print("⚠️  No tools attached to this agent!")
+            print("   The agent can only answer from its training data.")
+        print(f"{'=' * 50}")
+    
+    def attach_tools(self, tools):
+        """Attach or replace the tools for this agent."""
+        self.tools = tools
+        if tools:
+            self._engine = ReActEngine(self.llm, tools)
+        else:
+            self._engine = None
+        print(f"✅ Tools {'attached' if tools else 'removed'} from {self.name}")
+    
+    def remove_tools(self):
+        """Remove all tools from this agent."""
+        self.attach_tools(None)
+    
+    def run(self, question: str, verbose: bool = True):
+        """
+        Run the agent on a question.
+        
+        Args:
+            question: The user's question
+            verbose: Whether to print step-by-step output
+        """
+        print(f"\n🤖 {self.name} starting...\n")
+        print("=" * 70)
+        
+        if not self._engine or not self.tools:
+            # No tools - just use LLM directly
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": question}
+            ]
+            response = self.llm(messages)
+            if verbose:
+                print(f"💭 Response (no tools available):\n{response}")
+            print("=" * 70)
+            print("\n✅ Agent finished!")
+            return response
+        
+        # Use ReAct engine with tools
+        full_output = []
+        for step in self._engine.run(self.system_prompt, question, stream_final=False):
+            if verbose:
+                print(step, end="")
+            full_output.append(step)
+        
+        print("=" * 70)
+        print("\n✅ Agent finished!")
+        return "".join(full_output)
+
+
+class EmptyTools:
+    """
+    Placeholder tools object with no tools.
+    Used to demonstrate an agent without capabilities.
+    """
+    
+    def get_tools_list(self) -> list[str]:
+        return []
+    
+    def get_tools_documentation(self) -> str:
+        return "(No tools available)"
+
+
+# ============================================================
+# MCP TOOLS WRAPPER - Connects AI Agent to MCP Server
+# ============================================================
+
+
+class MCPToolsWrapper:
+    """
+    Wraps an MCP client to provide a tools interface for the AI Agent.
+    
+    This allows the agent to use MCP server tools as if they were local methods,
+    demonstrating the decoupled architecture.
+    """
+    
+    def __init__(self, mcp_client):
+        """
+        Initialize with an MCP client.
+        
+        Args:
+            mcp_client: A SyncMCPClient or similar with call_tool method
+        """
+        self._client = mcp_client
+        self._tools_cache = {}
+        self._setup_tools()
+    
+    def _setup_tools(self):
+        """Dynamically create methods for each MCP tool."""
+        for tool_name in self._client.get_tools_list():
+            # Create a closure to capture tool_name
+            def make_tool_method(name):
+                def tool_method(args_str):
+                    args = self._parse_args(args_str)
+                    return self._client.call_tool(name, args)
+                tool_method.__doc__ = f"MCP Tool: {name}"
+                return tool_method
+            
+            setattr(self, tool_name, make_tool_method(tool_name))
+            self._tools_cache[tool_name] = getattr(self, tool_name)
+    
+    def _parse_args(self, args_str) -> dict:
+        """Parse JSON string arguments into dict."""
+        if isinstance(args_str, dict):
+            return args_str
+        if isinstance(args_str, str):
+            args_str = args_str.strip()
+            if args_str.startswith("{"):
+                try:
+                    return json.loads(args_str)
+                except json.JSONDecodeError:
+                    pass
+            return {"query": args_str}
+        return {}
+    
+    def get_tools_list(self) -> list[str]:
+        """Get list of available tool names."""
+        return self._client.get_tools_list()
+    
+    def get_tools_documentation(self) -> str:
+        """Get formatted documentation for all tools."""
+        return self._client.get_tools_documentation()
+
+
+# ============================================================
+# MCP SERVER BUILDER - Easy Server Creation for Workshop
+# ============================================================
+
+
+@dataclass
+class ToolPack:
+    """Pre-defined pack of tools that can be added to an MCP server."""
+    name: str
+    description: str
+    tools: list[str]
+    
+
+# Available tool packs for the workshop
+TOOL_PACKS = {
+    "filesystem": ToolPack(
+        name="Filesystem Tools",
+        description="Read files, list directories, get file info",
+        tools=["read_file", "list_directory", "get_file_info"]
+    ),
+    "database": ToolPack(
+        name="Database Tools", 
+        description="Query products, sales data, and analytics",
+        tools=["query_products", "query_sales", "get_analytics"]
+    ),
+    "actions": ToolPack(
+        name="Action Tools",
+        description="Generate reports, send notifications, create tasks",
+        tools=["generate_report", "send_notification", "create_task"]
+    ),
+}
+
+
+class MCPServerBuilder:
+    """
+    Simple builder for creating MCP servers in the workshop.
+    
+    This provides a user-friendly interface for participants with
+    minimal technical ability to create and configure MCP servers.
+    
+    Usage:
+        server = MCPServerBuilder("my-server")
+        server.add_tool_pack("filesystem")
+        server.add_tool_pack("database")
+        server.start()
+    """
+    
+    def __init__(self, name: str = "workshop-server"):
+        """
+        Create a new MCP server builder.
+        
+        Args:
+            name: Name for your MCP server
+        """
+        self.name = name
+        self.tool_packs: list[str] = []
+        self._process = None
+        self._client = None
+        self._async_client = None
+        self._started = False
+        
+        print(f"🏗️  Created MCP Server Builder: '{name}'")
+        print(f"   Add tool packs using: server.add_tool_pack('name')")
+        print(f"   Available packs: {', '.join(TOOL_PACKS.keys())}")
+    
+    @staticmethod
+    def list_available_tool_packs():
+        """Show all available tool packs."""
+        print("\n📦 Available Tool Packs:")
+        print("=" * 50)
+        for key, pack in TOOL_PACKS.items():
+            print(f"\n   '{key}'")
+            print(f"   {pack.description}")
+            print(f"   Tools: {', '.join(pack.tools)}")
+        print("\n" + "=" * 50)
+    
+    def add_tool_pack(self, pack_name: str) -> "MCPServerBuilder":
+        """
+        Add a tool pack to your server.
+        
+        Args:
+            pack_name: One of 'filesystem', 'database', or 'actions'
+            
+        Returns:
+            self (for chaining)
+        """
+        if pack_name not in TOOL_PACKS:
+            print(f"❌ Unknown tool pack: '{pack_name}'")
+            print(f"   Available: {', '.join(TOOL_PACKS.keys())}")
+            return self
+        
+        if pack_name in self.tool_packs:
+            print(f"⚠️  Tool pack '{pack_name}' already added")
+            return self
+        
+        self.tool_packs.append(pack_name)
+        pack = TOOL_PACKS[pack_name]
+        print(f"✅ Added '{pack.name}' to server")
+        print(f"   New tools: {', '.join(pack.tools)}")
+        return self
+    
+    def show_configuration(self):
+        """Display the current server configuration."""
+        print(f"\n🖥️  MCP Server: {self.name}")
+        print("=" * 50)
+        
+        if not self.tool_packs:
+            print("⚠️  No tool packs added yet!")
+            print("   Use server.add_tool_pack('name') to add tools")
+        else:
+            print(f"📦 Tool Packs ({len(self.tool_packs)}):")
+            all_tools = []
+            for pack_name in self.tool_packs:
+                pack = TOOL_PACKS[pack_name]
+                print(f"\n   {pack.name}:")
+                for tool in pack.tools:
+                    print(f"      • {tool}")
+                    all_tools.append(tool)
+            print(f"\n📊 Total Tools: {len(all_tools)}")
+        
+        print("=" * 50)
+        if self._started:
+            print("🟢 Server Status: RUNNING")
+        else:
+            print("🔴 Server Status: NOT STARTED")
+            print("   Call server.start() to launch the server")
+    
+    def start(self) -> "SyncMCPClient":
+        """
+        Start the MCP server and return a connected client.
+        
+        Returns:
+            SyncMCPClient connected to the server
+        """
+        if self._started:
+            print("⚠️  Server already started!")
+            return self._client
+        
+        if not self.tool_packs:
+            print("❌ Cannot start: no tool packs added!")
+            print("   Use server.add_tool_pack('name') first")
+            return None
+        
+        # Import here to avoid circular imports
+        from stdio_mcp_client import StdioMCPClient, SyncMCPClient
+        
+        print(f"\n🚀 Starting MCP Server '{self.name}'...")
+        print("   (Running as subprocess in background)")
+        
+        # Create async client and connect
+        self._async_client = StdioMCPClient()
+        
+        # Build args based on selected tool packs
+        tool_packs_arg = ",".join(self.tool_packs)
+        
+        async def connect():
+            return await self._async_client.connect(
+                command=sys.executable,
+                args=["run_mcp_server.py", "--packs", tool_packs_arg]
+            )
+        
+        try:
+            loop = asyncio.get_event_loop()
+            tools = loop.run_until_complete(connect())
+            
+            self._client = SyncMCPClient(self._async_client)
+            self._started = True
+            
+            print(f"\n✅ Server started successfully!")
+            print(f"📦 Discovered {len(tools)} tools:")
+            for tool in tools:
+                print(f"   • {tool.name}: {tool.description}")
+            print(f"\n🎯 Use server.get_client() to get the connected client")
+            
+            return self._client
+            
+        except Exception as e:
+            print(f"❌ Failed to start server: {e}")
+            return None
+    
+    def get_client(self):
+        """Get the connected MCP client."""
+        if not self._started:
+            print("⚠️  Server not started. Call server.start() first.")
+            return None
+        return self._client
+    
+    def stop(self):
+        """Stop the MCP server."""
+        if not self._started:
+            print("⚠️  Server not running")
+            return
+        
+        print("🛑 Stopping MCP server...")
+        
+        async def close():
+            await self._async_client.close()
+        
+        try:
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(close())
+        except:
+            pass
+        
+        self._started = False
+        self._client = None
+        self._async_client = None
+        print("✅ Server stopped")
+
+
+# ============================================================
+# MCP CLIENT CONNECTION HELPER
+# ============================================================
+
+
+class MCPConnection:
+    """
+    Helper class to connect to any MCP server.
+    
+    Can connect to:
+    1. Local servers (via subprocess)
+    2. Remote servers (via URL - placeholder for company servers)
+    """
+    
+    def __init__(self):
+        self._clients = {}
+        self._async_clients = {}
+    
+    def connect_local(self, server_script: str = "run_mcp_server.py", 
+                      name: str = "local") -> "SyncMCPClient":
+        """
+        Connect to a local MCP server.
+        
+        Args:
+            server_script: Path to the server script
+            name: Friendly name for this connection
+            
+        Returns:
+            SyncMCPClient connected to the server
+        """
+        from stdio_mcp_client import StdioMCPClient, SyncMCPClient
+        
+        print(f"🔌 Connecting to local MCP server...")
+        
+        async_client = StdioMCPClient()
+        
+        async def connect():
+            return await async_client.connect(
+                command=sys.executable,
+                args=[server_script]
+            )
+        
+        loop = asyncio.get_event_loop()
+        tools = loop.run_until_complete(connect())
+        
+        client = SyncMCPClient(async_client)
+        self._clients[name] = client
+        self._async_clients[name] = async_client
+        
+        print(f"✅ Connected! Found {len(tools)} tools")
+        return client
+    
+    def connect_remote(self, url: str, name: str = "remote"):
+        """
+        Connect to a remote MCP server via URL.
+        
+        Args:
+            url: The server URL (e.g., company internal server)
+            name: Friendly name for this connection
+            
+        NOTE: This is a placeholder for connecting to company MCP servers.
+        The actual implementation will be provided when the URL is available.
+        """
+        print(f"🌐 Remote MCP Connection")
+        print(f"   URL: {url}")
+        print(f"   Name: {name}")
+        print(f"\n⚠️  Remote connection not yet implemented.")
+        print(f"   This will connect to the company MCP server when available.")
+        return None
+    
+    def get_client(self, name: str = "local"):
+        """Get a connected client by name."""
+        return self._clients.get(name)
+    
+    def disconnect(self, name: str = "local"):
+        """Disconnect a client."""
+        if name in self._async_clients:
+            async def close():
+                await self._async_clients[name].close()
+            
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(close())
+            
+            del self._clients[name]
+            del self._async_clients[name]
+            print(f"✅ Disconnected from '{name}'")
+    
+    def disconnect_all(self):
+        """Disconnect all clients."""
+        for name in list(self._async_clients.keys()):
+            self.disconnect(name)

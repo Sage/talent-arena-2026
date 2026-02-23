@@ -4,11 +4,14 @@ MCP Server Runner - Starts the MCP server via stdio transport.
 
 Run this in a terminal:
     python3 run_mcp_server.py
+    
+Or with specific tool packs:
+    python3 run_mcp_server.py --packs filesystem,database,actions
 
 The server will communicate via stdin/stdout using the MCP protocol.
-Keep this running while using the workshop notebook.
 """
 
+import argparse
 import asyncio
 import sys
 import os
@@ -17,22 +20,47 @@ import os
 script_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(script_dir)
 
-# Import and run the combined MCP server
+# Import the MCP server
 from mcp_servers import CombinedMCPServer
 
-async def main():
+
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="MCP Server Runner")
+    parser.add_argument(
+        "--packs",
+        type=str,
+        default="filesystem,database,actions",
+        help="Comma-separated list of tool packs: filesystem, database, actions"
+    )
+    return parser.parse_args()
+
+
+async def main(tool_packs: list[str]):
     """Start the MCP server with stdio transport."""
     # Print startup info to stderr (stdout is for MCP protocol)
     print("🚀 Starting MCP Server (stdio transport)...", file=sys.stderr)
-    print("📦 Tools: query_products, query_sales, get_analytics, read_file, list_directory, generate_report, etc.", file=sys.stderr)
+    print(f"📦 Tool packs: {', '.join(tool_packs)}", file=sys.stderr)
     print("⏳ Server running. Waiting for client connection...", file=sys.stderr)
     print("   (Press Ctrl+C to stop)", file=sys.stderr)
     
-    server = CombinedMCPServer()
+    # Configure which tool packs to enable
+    enable_filesystem = "filesystem" in tool_packs
+    enable_database = "database" in tool_packs
+    enable_actions = "actions" in tool_packs
+    
+    server = CombinedMCPServer(
+        enable_filesystem=enable_filesystem,
+        enable_database=enable_database,
+        enable_actions=enable_actions
+    )
     await server.run()
 
 if __name__ == "__main__":
+    args = parse_args()
+    tool_packs = [p.strip() for p in args.packs.split(",")]
+    
     try:
-        asyncio.run(main())
+        asyncio.run(main(tool_packs))
     except KeyboardInterrupt:
         print("\n👋 Server stopped.", file=sys.stderr)
