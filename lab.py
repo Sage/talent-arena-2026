@@ -251,10 +251,8 @@ class ReActEngine:
                     scratchpad += "Final Answer: [your answer]\n"
                     continue
 
-                # Always yield the LLM output for visibility
-                yield f"LLM Output: {llm_output}\n"
-
                 if parsed["type"] == "final":
+                    # Only yield the clean final answer, not the raw LLM output
                     yield f"Final Answer: {parsed['content']}\n"
                     if stream_final:
                         try:
@@ -272,6 +270,9 @@ class ReActEngine:
                     return
 
                 elif parsed["type"] == "action":
+                    # Yield LLM output for visibility during action steps
+                    yield f"LLM Output: {llm_output}\n"
+                    
                     tool_name = parsed["tool"]
                     tool_input = parsed["input"]
                     tool = getattr(self.tools, tool_name, None)
@@ -436,6 +437,7 @@ class Tools:
         >>> print(price)
     """
 
+    import json
     import requests
     import yfinance
     from bs4 import BeautifulSoup
@@ -519,12 +521,15 @@ class Tools:
         except Exception as e:
             return [{"title": "Error", "body": f"News search failed: {str(e)}"}]
 
-    def scrape_hacker_news(self):
+    def scrape_hacker_news(self, _unused=None):
         """
         Scrape the top trending stories from Hacker News.
         
         Fetches the current front page of Hacker News and extracts the top 3 headlines
         with their corresponding URLs.
+        
+        Args:
+            _unused: Ignored parameter for ReActEngine compatibility (can be any value).
         
         Returns:
             list[tuple]: List of (title, url) tuples for the top 3 stories.
@@ -628,6 +633,15 @@ class Tools:
             ...         print(f"BTC: ${btc}")
         """
         try:
+            import json
+            
+            # Handle JSON string input (e.g., '["BTC", "ETH"]' from LLM)
+            if isinstance(symbols_csv, str) and symbols_csv.strip().startswith('['):
+                try:
+                    symbols_csv = json.loads(symbols_csv)
+                except json.JSONDecodeError:
+                    pass  # Fall through to normal string processing
+            
             if isinstance(symbols_csv, str):
                 symbols = [s.strip().upper() for s in symbols_csv.split(",") if s.strip()]
             elif isinstance(symbols_csv, list):
@@ -676,8 +690,10 @@ class Tools:
         chart rendering libraries.
         
         Args:
-            price_dict (dict): Dictionary mapping labels to numeric values.
-                              Example: {"BTC": 65000, "ETH": 3500, "SOL": 140}
+            price_dict (dict or str): Dictionary mapping labels to numeric values,
+                                     or JSON string representation of a dict.
+                                     Example: {"BTC": 65000, "ETH": 3500, "SOL": 140}
+                                     or '{"BTC": 65000, "ETH": 3500}'
         
         Returns:
             str: Complete QuickChart URL that can be opened in a browser to view
@@ -696,6 +712,13 @@ class Tools:
         """
         try:
             import json
+            
+            # Handle JSON string input (e.g., '{"BTC": 65000}' from LLM)
+            if isinstance(price_dict, str):
+                try:
+                    price_dict = json.loads(price_dict)
+                except json.JSONDecodeError as e:
+                    return f"Error: Invalid JSON string. {str(e)}"
             
             if not isinstance(price_dict, dict):
                 return "Error: Input must be a dictionary (e.g., {'BTC': 65000, 'ETH': 3500})"
