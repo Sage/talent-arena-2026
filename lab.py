@@ -1310,7 +1310,8 @@ class AIAgent(BaseAgent):
     
     @property
     def system_prompt(self) -> str:
-        return """You are a helpful AI AGENT that has access to an MCP Server. Answer questions accurately and concisely. You will be passed a user query, and your list of tools. IMPORTANT, if your list of tools is empty, inform the user and do not try to make any tool calls.
+        return """You are a helpful AI AGENT that has access to some tools or MCP Server. Answer questions accurately and concisely. You will be passed a user query, and your list of tools. 
+        IMPORTANT, if your list of tools is empty, EXPLICLTLY STATE THAT NO TOOLS ARE AVAILABLE AND DO NOT ATTEMPT TO USE ANY TOOLS.
 Always decide if you need to use a tool before answering. If a tool can help you get the information you need, use it!
 
 CRITICAL: When you need to use a tool, output ONLY these three lines and then wait until the tool returns the results. DO NOT write anything else until you have the tool results.
