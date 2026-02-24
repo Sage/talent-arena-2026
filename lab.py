@@ -576,6 +576,72 @@ class BaseAgent:
 # TOOLS
 # ============================================================
 
+# Embedded demo database copied from mcp_servers so the coupled Tools
+# have the same sample data and behavior as the MCP database tools.
+SAMPLE_PRODUCTS = [
+    {"id": 1, "name": "Widget Pro", "category": "Electronics", "price": 299.99, "stock": 150},
+    {"id": 2, "name": "Gadget Plus", "category": "Electronics", "price": 199.99, "stock": 75},
+    {"id": 3, "name": "Super Tool", "category": "Hardware", "price": 49.99, "stock": 500},
+    {"id": 4, "name": "Smart Sensor", "category": "IoT", "price": 89.99, "stock": 200},
+    {"id": 5, "name": "Cloud Connect", "category": "Software", "price": 149.99, "stock": 999},
+]
+
+SAMPLE_SALES = [
+    {"id": 1, "product_id": 1, "quantity": 33, "date": "2026-02-01", "region": "EMEA"},
+    {"id": 2, "product_id": 2, "quantity": 59, "date": "2026-02-05", "region": "Americas"},
+    {"id": 3, "product_id": 1, "quantity": 6, "date": "2026-02-10", "region": "APAC"},
+    {"id": 4, "product_id": 3, "quantity": 114, "date": "2026-02-12", "region": "EMEA"},
+    {"id": 5, "product_id": 4, "quantity": 23, "date": "2026-02-15", "region": "Americas"},
+    {"id": 6, "product_id": 5, "quantity": 57, "date": "2026-02-18", "region": "EMEA"},
+]
+
+
+def init_demo_database_local() -> "sqlite3.Connection":
+    """Initialize an in-memory SQLite database with the sample data.
+
+    This is a local copy so the `Tools` class can be self-contained
+    and behave the same as the MCP `DatabaseMCPServer`.
+    """
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        CREATE TABLE products (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            category TEXT NOT NULL,
+            price REAL NOT NULL,
+            stock INTEGER NOT NULL
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE sales (
+            id INTEGER PRIMARY KEY,
+            product_id INTEGER NOT NULL,
+            quantity INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            region TEXT NOT NULL,
+            FOREIGN KEY (product_id) REFERENCES products(id)
+        )
+        """
+    )
+
+    for p in SAMPLE_PRODUCTS:
+        cursor.execute("INSERT INTO products VALUES (?, ?, ?, ?, ?)", (p["id"], p["name"], p["category"], p["price"], p["stock"]))
+
+    for s in SAMPLE_SALES:
+        cursor.execute("INSERT INTO sales VALUES (?, ?, ?, ?, ?)", (s["id"], s["product_id"], s["quantity"], s["date"], s["region"]))
+
+    conn.commit()
+    return conn
+
+
 
 class Tools:
     """
@@ -608,6 +674,216 @@ class Tools:
     import yfinance
     from bs4 import BeautifulSoup
     from ddgs import DDGS
+    import sqlite3
+    from pathlib import Path
+    from datetime import datetime
+    import matplotlib
+    matplotlib.use('Agg')  # Non-interactive backend for saving charts
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import io
+    import base64
+
+    # Workshop tools that match MCP server tools (organized by tool pack)
+    traditional_tools = {
+        "database": ["query_products", "query_sales", "get_analytics"]
+    }
+    
+    # Legacy tools to ignore when displaying tools (not part of workshop)
+    legacy_tools = [
+        "get_stock_price",
+        "search_news",
+        "scrape_hacker_news",
+        "get_project_summary",
+        "get_crypto_prices",
+        "generate_chart"
+    ]
+    
+    def __init__(self):
+        """Initialize tools with database connection and logs."""
+        # Use local embedded demo database so Tools are self-contained
+        from pathlib import Path
+        
+        # Initialize database (local embedded copy)
+        self.conn = init_demo_database_local()
+        
+    
+    def get_tools_list(self) -> list[str]:
+        """Get list of available tool names (excludes legacy tools)."""
+        all_tools = []
+        for pack_tools in self.traditional_tools.values():
+            all_tools.extend(pack_tools)
+        return all_tools
+    
+    def get_tool_pack(self, tool_name: str) -> str:
+        """Get the pack name for a given tool."""
+        for pack_name, tools in self.traditional_tools.items():
+            if tool_name in tools:
+                return pack_name
+        return "unknown"
+    
+    def get_tools_documentation(self) -> str:
+        """Get formatted documentation for all tools with pack names."""
+        tool_docs = []
+        for pack_name, tools in self.traditional_tools.items():
+            for tool_name in tools:
+                if hasattr(self, tool_name):
+                    method = getattr(self, tool_name)
+                    doc = method.__doc__ or "No description"
+                    first_line = doc.strip().split('\n')[0]
+                    tool_docs.append(f"- {tool_name} [{pack_name}]: {first_line}")
+        return "\n".join(tool_docs)
+
+    
+
+    
+    def query_products(self, category=None, min_price=None, max_price=None, search=None):
+        """Query products database. Filter by category, price range, or search name."""
+        # Handle JSON input from ReAct engine
+        if category and isinstance(category, str) and category.strip().startswith("{"):
+            try:
+                params_dict = json.loads(category)
+                category = params_dict.get('category')
+                min_price = params_dict.get('min_price')
+                max_price = params_dict.get('max_price')
+                search = params_dict.get('search')
+            except (json.JSONDecodeError, AttributeError):
+                pass  # If parsing fails, use original parameters
+        
+        cursor = self.conn.cursor()
+        query = "SELECT * FROM products WHERE 1=1"
+        params = []
+        
+        if category:
+            query += " AND category = ?"
+            params.append(category)
+        if min_price:
+            query += " AND price >= ?"
+            params.append(min_price)
+        if max_price:
+            query += " AND price <= ?"
+            params.append(max_price)
+        if search:
+            query += " AND name LIKE ?"
+            params.append(f"%{search}%")
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        results = [dict(row) for row in rows]
+        return json.dumps(results, indent=2)
+    
+    def query_sales(self, region=None, product_id=None, start_date=None, end_date=None):
+        """Query sales data by region, date range, or product."""
+        # Handle JSON input from ReAct engine
+        if region and isinstance(region, str) and region.strip().startswith("{"):
+            try:
+                params_dict = json.loads(region)
+                region = params_dict.get('region')
+                product_id = params_dict.get('product_id')
+                start_date = params_dict.get('start_date')
+                end_date = params_dict.get('end_date')
+            except (json.JSONDecodeError, AttributeError):
+                pass  # If parsing fails, use original parameters
+        
+        cursor = self.conn.cursor()
+        query = """
+            SELECT s.*, p.name as product_name, p.price,
+                   (s.quantity * p.price) as total_value
+            FROM sales s
+            JOIN products p ON s.product_id = p.id
+            WHERE 1=1
+        """
+        params = []
+        
+        if region:
+            query += " AND s.region = ?"
+            params.append(region)
+        if product_id:
+            query += " AND s.product_id = ?"
+            params.append(product_id)
+        if start_date:
+            query += " AND s.date >= ?"
+            params.append(start_date)
+        if end_date:
+            query += " AND s.date <= ?"
+            params.append(end_date)
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        results = [dict(row) for row in rows]
+        return json.dumps(results, indent=2)
+    
+    def get_analytics(self, metric):
+        """Get analytics: revenue, top_products, sales_by_region, or inventory_value."""
+        # Handle JSON input from ReAct engine
+        if metric and isinstance(metric, str) and metric.strip().startswith("{"):
+            try:
+                params_dict = json.loads(metric)
+                metric = params_dict.get('metric')
+            except (json.JSONDecodeError, AttributeError):
+                pass  # If parsing fails, use original parameter
+        
+        cursor = self.conn.cursor()
+        
+        if metric == "revenue":
+            cursor.execute("""
+                SELECT SUM(s.quantity * p.price) as total_revenue,
+                       COUNT(*) as total_transactions,
+                       SUM(s.quantity) as total_units_sold
+                FROM sales s
+                JOIN products p ON s.product_id = p.id
+            """)
+            row = cursor.fetchone()
+            result = dict(row)
+        
+        elif metric == "top_products":
+            cursor.execute("""
+                SELECT p.name, p.category,
+                       SUM(s.quantity) as units_sold,
+                       SUM(s.quantity * p.price) as revenue
+                FROM sales s
+                JOIN products p ON s.product_id = p.id
+                GROUP BY p.id
+                ORDER BY revenue DESC
+                LIMIT 5
+            """)
+            rows = cursor.fetchall()
+            result = [dict(row) for row in rows]
+        
+        elif metric == "sales_by_region":
+            cursor.execute("""
+                SELECT s.region,
+                       COUNT(*) as transactions,
+                       SUM(s.quantity) as units_sold,
+                       SUM(s.quantity * p.price) as revenue
+                FROM sales s
+                JOIN products p ON s.product_id = p.id
+                GROUP BY s.region
+                ORDER BY revenue DESC
+            """)
+            rows = cursor.fetchall()
+            result = [dict(row) for row in rows]
+        
+        elif metric == "inventory_value":
+            cursor.execute("""
+                SELECT SUM(price * stock) as total_inventory_value,
+                       SUM(stock) as total_units,
+                       COUNT(*) as product_count
+                FROM products
+            """)
+            row = cursor.fetchone()
+            result = dict(row)
+        
+        else:
+            result = {"error": f"Unknown metric: {metric}"}
+        
+        return json.dumps(result, indent=2)
+    
+    
+    
+    # ============================================================
+    # LEGACY TOOLS (for backwards compatibility with examples)
+    # ============================================================
 
     def get_stock_price(self, symbol):
         """
@@ -1070,7 +1346,7 @@ def test_all_tools(verbose=True):
 # ============================================================
 
 
-class AIAgent:
+class AIAgent(BaseAgent):
     """
     AI Agent that can use either:
     1. Coupled tools (traditional approach - tools are tightly bound)
@@ -1093,9 +1369,9 @@ class AIAgent:
         self.name = name
         self.tools = tools
         self.llm = get_llm()
-        self._engine = None
+        self.engine = None
         if tools:
-            self._engine = ReActEngine(self.llm, tools)
+            self.engine = ReActEngine(self.llm, tools)
     
     @property
     def system_prompt(self) -> str:
@@ -1105,7 +1381,7 @@ When you need to use a tool, respond with this EXACT format:
 
 Thought: [your reasoning about what to do]
 Action: [tool name]
-Action Input: [JSON object with the parameters]
+Action Input: {"param_name": "value", "other_param": "value"}
 
 After receiving the Observation (tool result), either:
 - Use another tool if needed
@@ -1113,10 +1389,14 @@ After receiving the Observation (tool result), either:
 
 Final Answer: [your answer to the user]
 
-IMPORTANT:
-- Always use valid JSON for Action Input
-- Wait for Observation before continuing
-- When you have enough information, give a Final Answer
+CRITICAL JSON FORMATTING RULES:
+- Action Input MUST be valid JSON on a single line
+- Use the EXACT parameter names shown in the tool's Parameters list
+- Always use double quotes for JSON strings
+- Example: Action Input: {"path": "files/"}
+- Example: Action Input: {"category": "Electronics", "min_price": 100}
+
+If a tool call fails, check the Observation error and fix your JSON formatting.
 """
     
     def get_tools_list(self) -> list[str]:
@@ -1150,16 +1430,23 @@ IMPORTANT:
         return "\n".join(tool_docs)
     
     def show_tools(self):
-        """Display the agent's available tools."""
+        """Display the agent's available tools with pack names."""
         tools = self.get_tools_list()
         print(f"🤖 {self.name}")
         print(f"{'=' * 50}")
         if tools:
             print(f"📦 Available Tools ({len(tools)}):")
             for tool in tools:
-                print(f"   • {tool}")
-            print(f"\n📋 Tool Documentation:")
-            print(self.get_tools_documentation())
+                # Get pack name if available
+                pack_name = ""
+                if hasattr(self.tools, 'get_tool_pack'):
+                    pack_name = f" [{self.tools.get_tool_pack(tool)}]"
+                elif hasattr(self.tools, '_tool_packs'):
+                    # MCPToolsWrapper case
+                    pack_name = f" [{self.tools._tool_packs.get(tool, 'unknown')}]"
+                print(f"   • {tool}{pack_name}")
+            #print(f"\n📋 Tool Documentation:")
+            #print(self.get_tools_documentation())
         else:
             print("⚠️  No tools attached to this agent!")
             print("   The agent can only answer from its training data.")
@@ -1169,9 +1456,9 @@ IMPORTANT:
         """Attach or replace the tools for this agent."""
         self.tools = tools
         if tools:
-            self._engine = ReActEngine(self.llm, tools)
+            self.engine = ReActEngine(self.llm, tools)
         else:
-            self._engine = None
+            self.engine = None
         print(f"✅ Tools {'attached' if tools else 'removed'} from {self.name}")
     
     def remove_tools(self):
@@ -1189,7 +1476,7 @@ IMPORTANT:
         print(f"\n🤖 {self.name} starting...\n")
         print("=" * 70)
         
-        if not self._engine or not self.tools:
+        if not self.engine or not self.tools:
             # No tools - just use LLM directly
             messages = [
                 {"role": "system", "content": self.system_prompt},
@@ -1204,14 +1491,15 @@ IMPORTANT:
         
         # Use ReAct engine with tools
         full_output = []
-        for step in self._engine.run(self.system_prompt, question, stream_final=False):
+        for step in self.engine.run(self.system_prompt, question, stream_final=False): #False
             if verbose:
                 print(step, end="")
             full_output.append(step)
         
         print("=" * 70)
         print("\n✅ Agent finished!")
-        return "".join(full_output)
+        # return "".join(full_output)
+        return
 
 
 class EmptyTools:
@@ -1240,15 +1528,18 @@ class MCPToolsWrapper:
     demonstrating the decoupled architecture.
     """
     
-    def __init__(self, mcp_client):
+    def __init__(self, mcp_client, tool_packs: list[str] = None):
         """
         Initialize with an MCP client.
         
         Args:
             mcp_client: A SyncMCPClient or similar with call_tool method
+            tool_packs: Optional list of tool pack names that were used
         """
         self._client = mcp_client
         self._tools_cache = {}
+        self._tool_packs = {}  # Maps tool name to pack name
+        self._enabled_packs = tool_packs or []
         self._setup_tools()
     
     def _setup_tools(self):
@@ -1258,12 +1549,30 @@ class MCPToolsWrapper:
             def make_tool_method(name):
                 def tool_method(args_str):
                     args = self._parse_args(args_str)
+                    # Check for parse errors and return helpful message
+                    if "_parse_error" in args:
+                        return f"❌ Parameter Parse Error: {args['_parse_error']}\n\nPlease provide valid JSON with the correct parameter names."
                     return self._client.call_tool(name, args)
                 tool_method.__doc__ = f"MCP Tool: {name}"
                 return tool_method
             
             setattr(self, tool_name, make_tool_method(tool_name))
             self._tools_cache[tool_name] = getattr(self, tool_name)
+            
+            # Map tool to its pack
+            pack_name = self._find_tool_pack(tool_name)
+            self._tool_packs[tool_name] = pack_name
+    
+    def _find_tool_pack(self, tool_name: str) -> str:
+        """Find which pack a tool belongs to."""
+        for pack_name, pack in TOOL_PACKS.items():
+            if tool_name in pack.tools:
+                return pack_name
+        return "unknown"
+    
+    def get_tool_pack(self, tool_name: str) -> str:
+        """Get the pack name for a given tool."""
+        return self._tool_packs.get(tool_name, "unknown")
     
     def _parse_args(self, args_str) -> dict:
         """Parse JSON string arguments into dict."""
@@ -1271,12 +1580,15 @@ class MCPToolsWrapper:
             return args_str
         if isinstance(args_str, str):
             args_str = args_str.strip()
+            # Try to parse as JSON
             if args_str.startswith("{"):
                 try:
                     return json.loads(args_str)
-                except json.JSONDecodeError:
-                    pass
-            return {"query": args_str}
+                except json.JSONDecodeError as e:
+                    # Return error info instead of silently failing
+                    return {"_parse_error": f"Invalid JSON: {str(e)}. Input was: {args_str[:100]}"}
+            # If it doesn't look like JSON, return parse error
+            return {"_parse_error": f"Expected JSON object starting with '{{', got: {args_str[:100]}"}
         return {}
     
     def get_tools_list(self) -> list[str]:
@@ -1284,8 +1596,33 @@ class MCPToolsWrapper:
         return self._client.get_tools_list()
     
     def get_tools_documentation(self) -> str:
-        """Get formatted documentation for all tools."""
-        return self._client.get_tools_documentation()
+        """Get formatted documentation for all tools with pack names and parameter schemas."""
+        # Use the client's tool documentation which includes full parameter schemas
+        if hasattr(self._client, 'tools') and self._client.tools:
+            docs = []
+            for tool_name in self.get_tools_list():
+                pack_name = self.get_tool_pack(tool_name)
+                if tool_name in self._client.tools:
+                    # Get the full formatted documentation including parameters
+                    tool = self._client.tools[tool_name]
+                    tool_doc = tool.format_for_llm()
+                    # Add pack name to the first line
+                    lines = tool_doc.split('\n')
+                    if lines:
+                        # Insert pack name after tool name
+                        first_line = lines[0].replace(f"- {tool_name}:", f"- {tool_name} [{pack_name}]:")
+                        lines[0] = first_line
+                    docs.append('\n'.join(lines))
+                else:
+                    docs.append(f"- {tool_name} [{pack_name}]: MCP Tool")
+            return "\n\n".join(docs)
+        
+        # Fallback if client doesn't have tools attribute
+        docs = []
+        for tool_name in self.get_tools_list():
+            pack_name = self.get_tool_pack(tool_name)
+            docs.append(f"- {tool_name} [{pack_name}]: MCP Tool")
+        return "\n".join(docs)
 
 
 # ============================================================
@@ -1318,7 +1655,35 @@ TOOL_PACKS = {
         description="Generate reports, send notifications, create tasks",
         tools=["generate_report", "send_notification", "create_task"]
     ),
+    "aggregator": ToolPack(
+        name="Aggregator Tools",
+        description="Transform and aggregate raw data for analysis",
+        tools=["aggregate_for_chart"]
+    ),
+    "grapher": ToolPack(
+        name="Grapher Tools",
+        description="Create visual charts from aggregated data",
+        tools=["create_chart"]
+    ),
 }
+
+# Maximum number of tool packs allowed (for workshop challenge)
+MAX_TOOL_PACKS = 3
+
+
+class TooManyToolPacksError(Exception):
+    """Raised when trying to add more than MAX_TOOL_PACKS tool packs."""
+    def __init__(self, current_packs: list[str], attempted_pack: str):
+        self.current_packs = current_packs
+        self.attempted_pack = attempted_pack
+        message = (
+            f"\n❌ TOO MANY TOOL PACKS!\n"
+            f"   Cannot add '{attempted_pack}': Maximum {MAX_TOOL_PACKS} tool packs allowed!\n"
+            f"   Current packs: {', '.join(current_packs)}\n"
+            f"\n💡 To fix this, remove a pack first:\n"
+            f"   server.remove_tool_pack('pack_name')\n"
+        )
+        super().__init__(message)
 
 
 class MCPServerBuilder:
@@ -1368,11 +1733,16 @@ class MCPServerBuilder:
         """
         Add a tool pack to your server.
         
+        NOTE: Maximum of 3 tool packs allowed for the workshop challenge!
+        
         Args:
-            pack_name: One of 'filesystem', 'database', or 'actions'
+            pack_name: One of 'filesystem', 'database', 'actions', 'aggregator', or 'grapher'
             
         Returns:
             self (for chaining)
+            
+        Raises:
+            TooManyToolPacksError: If trying to add more than MAX_TOOL_PACKS
         """
         if pack_name not in TOOL_PACKS:
             print(f"❌ Unknown tool pack: '{pack_name}'")
@@ -1383,10 +1753,35 @@ class MCPServerBuilder:
             print(f"⚠️  Tool pack '{pack_name}' already added")
             return self
         
+        # Enforce tool pack limit for workshop challenge - RAISE EXCEPTION
+        if len(self.tool_packs) >= MAX_TOOL_PACKS:
+            raise TooManyToolPacksError(self.tool_packs, pack_name)
+        
         self.tool_packs.append(pack_name)
         pack = TOOL_PACKS[pack_name]
         print(f"✅ Added '{pack.name}' to server")
         print(f"   New tools: {', '.join(pack.tools)}")
+        print(f"   📊 Tool packs used: {len(self.tool_packs)}/{MAX_TOOL_PACKS}")
+        return self
+    
+    def remove_tool_pack(self, pack_name: str) -> "MCPServerBuilder":
+        """
+        Remove a tool pack from your server.
+        
+        Args:
+            pack_name: Name of the pack to remove
+            
+        Returns:
+            self (for chaining)
+        """
+        if pack_name not in self.tool_packs:
+            print(f"⚠️  Tool pack '{pack_name}' is not currently added")
+            return self
+        
+        self.tool_packs.remove(pack_name)
+        pack = TOOL_PACKS[pack_name]
+        print(f"🗑️  Removed '{pack.name}' from server")
+        print(f"   📊 Tool packs used: {len(self.tool_packs)}/{MAX_TOOL_PACKS}")
         return self
     
     def show_configuration(self):
