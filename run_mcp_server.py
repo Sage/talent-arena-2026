@@ -22,7 +22,7 @@ os.chdir(script_dir)
 
 # Import the MCP server
 # from mcp_servers import CombinedMCPServer
-from mcp_servers_refactored import CombinedMCPServer
+from mcp_server import CombinedMCPServer
 
 
 def parse_args():
