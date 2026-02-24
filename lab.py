@@ -114,21 +114,28 @@ class BedrockBridge:
         return "\n\n".join(prompt_parts)
 
     def __call__(self, messages):
-        """Call the API with messages and return the response."""
+        """Call the API with messages and return the response. Retries on 503 errors."""
+        import time
         prompt = self._convert_messages_to_prompt(messages)
         payload = {"prompt": prompt}
-        
         headers, body = self._sign_request(payload)
-        
-        response = requests.post(
-            self.endpoint,
-            headers=headers,
-            data=body
-        )
-        
+
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            response = requests.post(
+                self.endpoint,
+                headers=headers,
+                data=body
+            )
+            #print(f"BedrockBridge: API call attempt {attempt}, status code: {response.status_code}")
+            if response.status_code != 503:
+                break
+            #print(f"⚠️  BedrockBridge: Received 503 Service Unavailable (attempt {attempt}/{max_retries}). Retrying in 5 seconds...")
+            time.sleep(5)
+
         if not response.ok:
             raise Exception(f"API Error {response.status_code}: {response.text}")
-        
+
         data = response.json()
         return data.get("response", "")
 
@@ -266,7 +273,7 @@ class ReActEngine:
         ...     print(output)
     """
 
-    def __init__(self, llm, tools, max_iterations=10):
+    def __init__(self, llm, tools, max_iterations=15):
         self.llm = llm
         self.tools = tools
         self.max_iterations = max_iterations
@@ -295,42 +302,36 @@ class ReActEngine:
         )
 
     def _parse(self, output: str):
-        """
-        Parse the LLM's output to extract actions or final answers.
+        # """
+        # Parse the LLM's output to extract actions or final answers.
         
-        The LLM is expected to follow the ReAct format:
-        - For actions: "Action: tool_name\nAction Input: input_value"
-        - For final answers: "Final Answer: the answer text"
+        # The LLM is expected to follow the ReAct format:
+        # - For actions: "Action: tool_name\nAction Input: input_value"
+        # - For final answers: "Final Answer: the answer text"
         
-        Args:
-            output (str): Raw text output from the LLM.
+        # Args:
+        #     output (str): Raw text output from the LLM.
         
-        Returns:
-            dict: Parsed output in one of two formats:
-                  - {"type": "final", "content": str} for final answers
-                  - {"type": "action", "tool": str, "input": str} for tool actions
+        # Returns:
+        #     dict: Parsed output in one of two formats:
+        #           - {"type": "final", "content": str} for final answers
+        #           - {"type": "action", "tool": str, "input": str} for tool actions
         
-        Raises:
-            ValueError: If the output doesn't match the expected ReAct format.
+        # Raises:
+        #     ValueError: If the output doesn't match the expected ReAct format.
         
-        Examples:
-            >>> engine._parse("Action: get_stock_price\nAction Input: AAPL")
-            {"type": "action", "tool": "get_stock_price", "input": "AAPL"}
+        # Examples:
+        #     >>> engine._parse("Action: get_stock_price\nAction Input: AAPL")
+        #     {"type": "action", "tool": "get_stock_price", "input": "AAPL"}
             
-            >>> engine._parse("Final Answer: The price is $150")
-            {"type": "final", "content": "The price is $150"}
-        """
-        if "Final Answer:" in output:
-            return {
-                "type": "final",
-                "content": output.split("Final Answer:")[-1].strip(),
-            }
-
-        action_match = re.search(r"Action:\s*(.*)", output)
-        input_match = re.search(r"Action Input:\s*(.*)", output)
-        # Check for Action FIRST (even if Final Answer appears - LLM might include both by mistake)
-        # action_match = re.search(r"Action:\s*(.*?)(?:\n|$)", output)
-        # input_match = re.search(r"Action Input:\s*(.*?)(?:\n|$)", output)
+        #     >>> engine._parse("Final Answer: The price is $150")
+        #     {"type": "final", "content": "The price is $150"}
+        #"""
+        # Prefer parsing an Action (tool call) first. Many LLMs include both
+        # action and a final answer in the same response; if we accept the
+        # final answer too early we never call the requested tool.
+        action_match = re.search(r"Action:\s*(.*?)(?:\n|$)", output, re.IGNORECASE)
+        input_match = re.search(r"Action Input:\s*(.*?)(?:\n|$)", output, re.IGNORECASE)
 
         if action_match and input_match:
             return {
@@ -338,50 +339,23 @@ class ReActEngine:
                 "tool": action_match.group(1).strip(),
                 "input": input_match.group(1).strip(),
             }
-        
-        # Only check Final Answer if no Action was found
-        if "Final Answer:" in output:
+
+        # If no action found, fall back to a Final Answer (allow multiline answers)
+        final_match = re.search(r"Final Answer:\s*(.*)$", output, re.IGNORECASE | re.DOTALL)
+        if final_match:
             return {
                 "type": "final",
-                "content": output.split("Final Answer:")[-1].strip(),
+                "content": final_match.group(1).strip(),
             }
 
         raise ValueError("Invalid LLM format")
 
     def run(self, system_prompt: str, user_input: str, stream_final=False):
-        """
-        Execute the ReAct reasoning loop.
-        
-        Iteratively prompts the LLM to think, act, and observe until a final answer
-        is reached or max_iterations is exceeded. Each iteration:
-        1. Sends the system prompt, question, and scratchpad to the LLM
-        2. Parses the LLM's response for actions or final answer
-        3. Executes tools if actions are requested
-        4. Updates the scratchpad with observations
-        5. Yields outputs for visibility
-        
-        Args:
-            system_prompt (str): The agent's role and behavioral instructions.
-            user_input (str): The user's question or task.
-            stream_final (bool): If True, streams the final answer token by token.
-                                If False, returns the final answer as a single chunk.
-        
-        Yields:
-            str: Status updates including:
-                 - LLM reasoning outputs
-                 - Tool actions and observations
-                 - Final answer (streamed or complete)
-                 - Error messages if max iterations reached
-        
-        Examples:
-            >>> for chunk in engine.run("You are a stock analyst", "AAPL stock price"):
-            ...     print(chunk)
-        """
         scratchpad = ""
         system_message = f"""
-                        {system_prompt}
+{system_prompt}
 
-                        You have access to the following tools:
+You have access to the following tools:
                         {self._tool_list()}
 
                         Use EXACTLY this format:
@@ -393,87 +367,48 @@ class ReActEngine:
                         Final Answer:
                         """
 
-        for iteration in range(self.max_iterations):
-            try:
-                messages = [
-                    {"role": "system", "content": system_message},
-                    {"role": "user", "content": f"Question: {user_input}\n\n{scratchpad}"},
-                ]
-                llm_output = self.llm(messages)
-                
-                try:
-                    parsed = self._parse(llm_output)
-                except ValueError as e:
-                    error_msg = f"⚠️  Parse Error: {str(e)}\nLLM Output was: {llm_output}\n"
-                    yield error_msg
-                    
-                    # Add actionable feedback to scratchpad so LLM can self-correct
-                    scratchpad += f"\nObservation: Your output format was incorrect. {str(e)}\n"
-                    scratchpad += "Remember to use EXACTLY this format:\n"
-                    scratchpad += "Thought: [your reasoning]\n"
-                    scratchpad += "Action: [tool_name]\n"
-                    scratchpad += "Action Input: [input_value]\n"
-                    scratchpad += "OR if you have the final answer:\n"
-                    scratchpad += "Final Answer: [your answer]\n"
-                    continue
 
-                if parsed["type"] == "final":
-                    # Only yield the clean final answer, not the raw LLM output
-                    yield f"Final Answer: {parsed['content']}\n"
-                    if stream_final:
-                        try:
-                            stream_messages = [
-                                {
-                                    "role": "system",
-                                    "content": "Return only the final answer text.",
-                                },
-                                {"role": "user", "content": parsed["content"]},
-                            ]
-                            for chunk in self.llm.stream(stream_messages):
-                                yield chunk
-                        except Exception as e:
-                            yield f"\n⚠️  Streaming error: {str(e)}\n"
-                    return
+        for _ in range(self.max_iterations):
+            messages = [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": f"Question: {user_input}\n\n{scratchpad}"},
+            ]
+            llm_output = self.llm(messages)
+            parsed = self._parse(llm_output)
 
-                elif parsed["type"] == "action":
-                    # Yield LLM output for visibility during action steps
-                    yield f"LLM Output: {llm_output}\n"
-                    
-                    tool_name = parsed["tool"]
-                    tool_input = parsed["input"]
-                    tool = getattr(self.tools, tool_name, None)
-                    
-                    # Verify the tool exists and is a bound method (not a class attribute)
-                    if not tool or not inspect.ismethod(tool):
-                        error_msg = f"Tool '{tool_name}' not found. Available tools: {self._tool_list()}"
-                        yield f"⚠️  {error_msg}\n"
-                        scratchpad += f"\nObservation: Error - {error_msg}\n"
-                        continue
-                    
-                    try:
-                        observation = tool(tool_input)
-                        step = f"Action: {tool_name}\nAction Input: {tool_input}\nObservation: {observation}\n"
-                        yield step
-                        scratchpad += f"""
-                                        Thought:
-                                        Action: {tool_name}
-                                        Action Input: {tool_input}
-                                        Observation: {observation}
-                                        """
-                    except Exception as e:
-                        error_msg = f"Tool execution failed: {str(e)}"
-                        yield f"⚠️  {error_msg}\n"
-                        scratchpad += f"\nObservation: Error - {error_msg}\n"
-                        
-            except RuntimeError as e:
-                yield f"⚠️  LLM Error on iteration {iteration + 1}: {str(e)}\n"
-                yield "Stopping due to LLM failure.\n"
+            # Only yield the LLM output up to Action Input (never hallucinated Observation)
+            if parsed["type"] == "final":
+                yield f"Final Answer: {parsed['content']}\n"
+                if stream_final:
+                    stream_messages = [
+                        {
+                            "role": "system",
+                            "content": "Return only the final answer text.",
+                        },
+                        {"role": "user", "content": parsed["content"]},
+                    ]
+                    for chunk in self.llm.stream(stream_messages):
+                        yield chunk
                 return
-            except Exception as e:
-                yield f"⚠️  Unexpected error on iteration {iteration + 1}: {str(e)}\n"
-                continue
-                
+
+            elif parsed["type"] == "action":
+                tool_name = parsed["tool"]
+                tool_input = parsed["input"]
+                tool = getattr(self.tools, tool_name, None)
+                if not tool:
+                    raise ValueError(f"Tool {tool_name} not found")
+                observation = tool(tool_input)
+                step = f"Action: {tool_name}\nAction Input: {tool_input}\nObservation: {observation}\n"
+                yield step
+                scratchpad += f"""
+                                Thought:
+                                Action: {tool_name}
+                                Action Input: {tool_input}
+                                Observation: {observation}
+                                """
         yield "Max iterations reached without final answer.\n"
+
+
 
 
 # ============================================================
@@ -644,30 +579,30 @@ def init_demo_database_local() -> "sqlite3.Connection":
 
 
 class Tools:
-    """
-    Toolbox containing agent capabilities and actions.
+    # """
+    # Toolbox containing agent capabilities and actions.
     
-    This class provides a collection of tools that agents can use to interact
-    with external services, APIs, and data sources. Each method is automatically
-    discovered and made available to agents through the ReAct engine.
+    # This class provides a collection of tools that agents can use to interact
+    # with external services, APIs, and data sources. Each method is automatically
+    # discovered and made available to agents through the ReAct engine.
     
-    Available Tools:
-        - get_stock_price: Fetch real-time stock market data
-        - search_news: Search for recent news articles
-        - scrape_hacker_news: Get trending tech stories from Hacker News
-        - get_project_summary: Web search for project/topic information
-        - get_crypto_prices: Fetch cryptocurrency prices from Binance
-        - generate_chart: Create QuickChart visualization URLs
+    # Available Tools:
+    #     - get_stock_price: Fetch real-time stock market data
+    #     - search_news: Search for recent news articles
+    #     - scrape_hacker_news: Get trending tech stories from Hacker News
+    #     - get_project_summary: Web search for project/topic information
+    #     - get_crypto_prices: Fetch cryptocurrency prices from Binance
+    #     - generate_chart: Create QuickChart visualization URLs
     
-    Note:
-        New tools can be added by simply defining new methods in this class.
-        They will be automatically available to all agents.
+    # Note:
+    #     New tools can be added by simply defining new methods in this class.
+    #     They will be automatically available to all agents.
     
-    Examples:
-        >>> tools = Tools()
-        >>> price = tools.get_stock_price("AAPL")
-        >>> print(price)
-    """
+    # Examples:
+    #     >>> tools = Tools()
+    #     >>> price = tools.get_stock_price("AAPL")
+    #     >>> print(price)
+    # """
 
     import json
     import requests
@@ -1375,28 +1310,37 @@ class AIAgent(BaseAgent):
     
     @property
     def system_prompt(self) -> str:
-        return """You are a helpful AI assistant. Answer questions accurately and concisely.
-        
-When you need to use a tool, respond with this EXACT format:
+        return """You are a helpful AI AGENT that has access to an MCP Server. Answer questions accurately and concisely. You will be passed a user query, and your list of tools. IMPORTANT, if your list of tools is empty, inform the user and do not try to make any tool calls.
+Always decide if you need to use a tool before answering. If a tool can help you get the information you need, use it!
 
-Thought: [your reasoning about what to do]
+CRITICAL: When you need to use a tool, output ONLY these three lines and then wait until the tool returns the results. DO NOT write anything else until you have the tool results.
+
+Thought: [your reasoning about what tool to use]
 Action: [tool name]
-Action Input: {"param_name": "value", "other_param": "value"}
+Action Input: {"param_name": "value"}
 
-After receiving the Observation (tool result), either:
-- Use another tool if needed
-- OR provide your Final Answer:
+DO NOT write anything after Action Input UNTIL you have received the results of the tool.
+Once you have received the tool results, you can use that information to answer the question or decide to use another tool if needed. This is where you STATE YOUR OBSERVATION and can REASON about the results before taking your next action.
+DO NOT generate an Observation UNTIL YOU HAVE TO TOOL RESULTS - the system will execute the tool and provide real results.
+DO NOT generate a Final Answer until you have received actual tool results.
+NEVER make up or hallucinate data. ALWAYS wait for the real Observation from the system.
 
-Final Answer: [your answer to the user]
+THE OUTPUT OF THE LLM WILL BE PRINTED TO THE USER AS 
+    THOUGHT:
+    ACTION:
+    ACTION INPUT:
+    OBSERVATION: (ONLY ONCE YOU ARE GIVEN TOOL RESULTS)
+    EITHER ANOTHER THOUGHT/ACTION/INPUT OR THE FINAL ANSWER.
 
-CRITICAL JSON FORMATTING RULES:
+After the system provides the Observation with real tool results, you may then:
+- Use another tool (output Thought/Action/Action Input and stop)
+- OR provide your final answer: Final Answer: [your answer based on actual results]
+
+JSON FORMATTING RULES:
 - Action Input MUST be valid JSON on a single line
 - Use the EXACT parameter names shown in the tool's Parameters list
 - Always use double quotes for JSON strings
 - Example: Action Input: {"path": "files/"}
-- Example: Action Input: {"category": "Electronics", "min_price": 100}
-
-If a tool call fails, check the Observation error and fix your JSON formatting.
 """
     
     def get_tools_list(self) -> list[str]:
