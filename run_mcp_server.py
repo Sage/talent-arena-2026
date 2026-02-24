@@ -21,7 +21,8 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(script_dir)
 
 # Import the MCP server
-from mcp_servers import CombinedMCPServer
+# from mcp_servers import CombinedMCPServer
+from mcp_servers_refactored import CombinedMCPServer
 
 
 def parse_args():
@@ -30,8 +31,8 @@ def parse_args():
     parser.add_argument(
         "--packs",
         type=str,
-        default="filesystem,database,actions",
-        help="Comma-separated list of tool packs: filesystem, database, actions"
+        default="filesystem,database,actions,aggregator,grapher",
+        help="Comma-separated list of tool packs: filesystem, database, actions, aggregator, grapher"
     )
     return parser.parse_args()
 
@@ -48,11 +49,15 @@ async def main(tool_packs: list[str]):
     enable_filesystem = "filesystem" in tool_packs
     enable_database = "database" in tool_packs
     enable_actions = "actions" in tool_packs
+    enable_aggregator = "aggregator" in tool_packs
+    enable_grapher = "grapher" in tool_packs
     
     server = CombinedMCPServer(
         enable_filesystem=enable_filesystem,
         enable_database=enable_database,
-        enable_actions=enable_actions
+        enable_actions=enable_actions,
+        enable_aggregator=enable_aggregator,
+        enable_grapher=enable_grapher
     )
     await server.run()
 

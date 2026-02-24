@@ -1,0 +1,47 @@
+# =============================================================================
+# MCP Workshop Requirements
+# =============================================================================
+# Core dependencies for the workshop - compatible with various Python environments
+# This file is designed to work for workshop attendees with different setups
+
+# ---- Core MCP & Communication ----
+mcp>=1.0.0
+httpx>=0.28.0
+httpx-sse>=0.4.0
+websockets>=16.0
+
+# ---- AWS & Authentication ----
+boto3>=1.35.0
+botocore>=1.35.0
+requests>=2.32.0
+
+# ---- Data & Visualization ----
+matplotlib>=3.8.0
+seaborn>=0.13.0
+pandas>=2.0.0
+numpy>=1.24.0
+
+# ---- LLM Integration ----
+freeflow-llm>=0.1.3
+python-dotenv>=1.0.0
+
+# ---- Jupyter & Notebook Support ----
+ipython>=8.0.0
+ipykernel>=6.29.0
+jupyter>=1.0.0
+notebook>=7.0.0
+nest-asyncio>=1.6.0
+
+# ---- Type Hints & Validation ----
+pydantic>=2.8.0
+pydantic-core>=2.20.0
+typing-extensions>=4.12.0
+
+# ---- Server & Web ----
+starlette>=0.52.0
+uvicorn>=0.41.0
+sse-starlette>=3.2.0
+
+# ---- Utilities ----
+python-multipart>=0.0.22
+jsonschema>=4.26.0

@@ -33,18 +33,48 @@ class MCPTool:
     input_schema: dict[str, Any]
 
     def format_for_llm(self) -> str:
-        """Format tool info for LLM system prompt."""
+        """Format tool info for LLM system prompt with explicit type information."""
         params = self.input_schema.get("properties", {})
         required = self.input_schema.get("required", [])
         
         param_strs = []
+        example_params = {}
+        
         for name, schema in params.items():
             req = "(required)" if name in required else "(optional)"
-            desc = schema.get("description", schema.get("type", ""))
-            param_strs.append(f"    - {name} {req}: {desc}")
+            param_type = schema.get("type", "string")
+            desc = schema.get("description", "")
+            
+            # Add enum values if present
+            enum_values = schema.get("enum")
+            enum_str = f" [values: {', '.join(str(v) for v in enum_values)}]" if enum_values else ""
+            
+            # CRITICAL: Show explicit type to help LLM use correct JSON types
+            type_hint = f"({param_type})"
+            if param_type == "integer":
+                type_hint = "(integer - must be a NUMBER, not a string like \"1\")"
+                example_params[name] = 1  # example integer
+            elif param_type == "number":
+                type_hint = "(number - must be a NUMBER, not a string)"
+                example_params[name] = 100.0
+            elif param_type == "string":
+                example_params[name] = enum_values[0] if enum_values else "example"
+            elif param_type == "boolean":
+                type_hint = "(boolean - use true/false, not \"true\"/\"false\")"
+                example_params[name] = True
+            
+            param_strs.append(f"    - {name} {type_hint} {req}: {desc}{enum_str}")
         
         params_doc = "\n".join(param_strs) if param_strs else "    (no parameters)"
-        return f"- {self.name}: {self.description}\n  Parameters:\n{params_doc}"
+        
+        # Build example JSON for required params
+        required_example = {k: v for k, v in example_params.items() if k in required}
+        example_str = ""
+        if required_example:
+            import json
+            example_str = f"\n  Example: {json.dumps(required_example)}"
+        
+        return f"- {self.name}: {self.description}\n  Parameters:\n{params_doc}{example_str}"
 
 
 class StdioMCPClient:
