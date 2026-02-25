@@ -359,6 +359,13 @@ You have access to the following tools:
             elif parsed["type"] == "action":
                 tool_name = parsed["tool"]
                 tool_input = parsed["input"]
+                
+                # Extract and yield the Thought (reasoning) before the action
+                thought_match = re.search(r"Thought:\s*(.*?)(?=Action:|$)", llm_output, re.IGNORECASE | re.DOTALL)
+                if thought_match:
+                    thought_text = thought_match.group(1).strip()
+                    yield f"Thought: {thought_text}\n"
+                
                 tool = getattr(self.tools, tool_name, None)
                 if not tool:
                     raise ValueError(f"Tool {tool_name} not found")
