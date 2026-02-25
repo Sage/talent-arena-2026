@@ -1156,6 +1156,35 @@ class Tools:
 # NOTEBOOK HELPERS
 # ============================================================
 
+def display_react_format_error(error: ValueError):
+    """
+    Display helpful error message when LLM output doesn't match ReAct format.
+    
+    This is a reusable helper for notebook cells to avoid repeating error
+    handling boilerplate. The error typically occurs when the LLM outputs
+    text without proper 'Thought:', 'Action:', 'Action Input:', or 'Final Answer:' markers.
+    
+    Args:
+        error (ValueError): The ValueError exception from ReActEngine._parse()
+    
+    Examples:
+        >>> try:
+        ...     for output in agent.run(query):
+        ...         print(output)
+        ... except ValueError as e:
+        ...     display_react_format_error(e)
+    """
+    print(f"\n\n❌ FORMAT ERROR: {e}")
+    print("\n🔍 This means the LLM output didn't match the ReAct format.")
+    print("Expected format:")
+    print("  Thought: [reasoning]")
+    print("  Action: [tool_name]")
+    print("  Action Input: [input_value]")
+    print("\nOR")
+    print("  Final Answer: [answer]")
+    print("\n💡 Try re-running the cell - sometimes the LLM needs a second attempt.")
+    print("   If it persists, check your system_prompt for clarity.")
+
 
 def test_all_tools(verbose=True):
     """
