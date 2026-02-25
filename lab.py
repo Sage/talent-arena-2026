@@ -644,10 +644,13 @@ class Tools:
         
     
     def get_tools_list(self) -> list[str]:
-        """Get list of available tool names (excludes legacy tools)."""
+        """Get list of available tool names (includes all tools for market intelligence)."""
         all_tools = []
+        # Include traditional tools
         for pack_tools in self.traditional_tools.values():
             all_tools.extend(pack_tools)
+        # Include legacy tools for market intelligence workshop
+        all_tools.extend(self.legacy_tools)
         return all_tools
     
     def get_tool_pack(self, tool_name: str) -> str:
@@ -660,6 +663,7 @@ class Tools:
     def get_tools_documentation(self) -> str:
         """Get formatted documentation for all tools with pack names."""
         tool_docs = []
+        # Document traditional tools
         for pack_name, tools in self.traditional_tools.items():
             for tool_name in tools:
                 if hasattr(self, tool_name):
@@ -667,6 +671,15 @@ class Tools:
                     doc = method.__doc__ or "No description"
                     first_line = doc.strip().split('\n')[0]
                     tool_docs.append(f"- {tool_name} [{pack_name}]: {first_line}")
+        
+        # Document legacy tools for market intelligence workshop
+        for tool_name in self.legacy_tools:
+            if hasattr(self, tool_name):
+                method = getattr(self, tool_name)
+                doc = method.__doc__ or "No description"
+                first_line = doc.strip().split('\n')[0]
+                tool_docs.append(f"- {tool_name}: {first_line}")
+        
         return "\n".join(tool_docs)
 
     
