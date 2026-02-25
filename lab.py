@@ -614,7 +614,12 @@ class Tools:
         # Initialize database (local embedded copy)
         self.conn = init_demo_database_local()
         
-    
+    def get_traditional_tools(self)-> list[str]:
+        """Get list of traditional tool names (for displaying in agent docs)."""
+        all_tools = []
+        for pack_tools in self.traditional_tools.values():
+            all_tools.extend(pack_tools)
+        return all_tools
     def get_tools_list(self) -> list[str]:
         """Get list of available tool names (includes all tools for market intelligence)."""
         all_tools = []
@@ -1363,14 +1368,14 @@ JSON FORMATTING RULES:
         if not self.tools:
             return []
         
-        if hasattr(self.tools, 'get_tools_list'):
-            return self.tools.get_tools_list()
+        if hasattr(self.tools, 'get_traditional_tools'):
+            return self.tools.get_traditional_tools()
         
         # Fallback: introspect the tools object
-        return [
-            name for name in dir(self.tools)
-            if not name.startswith("_") and callable(getattr(self.tools, name))
-        ]
+        # return [
+        #     name for name in dir(self.tools)
+        #     if not name.startswith("_") and callable(getattr(self.tools, name))
+        # ]
     
     def get_tools_documentation(self) -> str:
         """Get formatted documentation for all tools."""
@@ -1612,7 +1617,7 @@ TOOL_PACKS = {
     "actions": ToolPack(
         name="Action Tools",
         description="Generate reports, send notifications, create tasks",
-        tools=["generate_report", "send_notification", "create_task"]
+        tools=["generate_report", "send_notification", "create_task", "get_action_log"]
     ),
     "aggregator": ToolPack(
         name="Aggregator Tools",
@@ -1812,8 +1817,6 @@ class MCPServerBuilder:
             
             print(f"\n✅ Server started successfully!")
             print(f"📦 Discovered {len(tools)} tools:")
-            for tool in tools:
-                print(f"   • {tool.name}: {tool.description}")
             print(f"\n🎯 Use server.get_client() to get the connected client")
             
             return self._client
