@@ -46,57 +46,22 @@ class BedrockBridge:
     Bridge to connect to Sage Bedrock via API Gateway with IAM authentication.
     """
 
-    def __init__(self, api_url=None, profile=None, region=None):
+    def __init__(self, api_url=None):
         """
-        Initialize BedrockBridge.
-        
-        Args:
-            api_url: API Gateway URL (defaults to BEDROCK_API_URL env var)
-            profile: AWS profile name (optional)
-            region: AWS region (optional, will be inferred from URL or env)
+        Initialize Bridge for Sage public Lambda Function URL only.
+        Only FUNCTION_URL is supported. Implements retry logic for Lambda 503 errors.
         """
-        self.api_url = api_url or os.getenv("BEDROCK_API_URL")
+        self.api_url = api_url or os.getenv("FUNCTION_URL")
         if not self.api_url:
-            raise ValueError("BEDROCK_API_URL must be provided or set in environment")
-        
-        # Get API password from environment
+            raise ValueError("FUNCTION_URL must be provided or set in environment")
+
         self.api_password = os.getenv("API_PASSWORD")
         if not self.api_password:
             raise ValueError("API_PASSWORD must be set in environment")
-        
-        # Setup AWS session and credentials
-        self.session = boto3.Session(profile_name=profile) if profile else boto3.Session()
-        self.credentials = self.session.get_credentials()
-        if not self.credentials:
-            raise ValueError("No AWS credentials found. Run 'aws configure' or 'aws sso login'")
-        
-        # Determine region
-        if not region:
-            if "eu-west-1" in self.api_url:
-                region = "eu-west-1"
-            elif "us-east-1" in self.api_url:
-                region = "us-east-1"
-            else:
-                region = os.getenv("AWS_REGION", "us-east-1")
-        self.region = region
-        
+
         self.endpoint = f"{self.api_url.rstrip('/')}/v1/query"
 
-    def _sign_request(self, payload):
-        """Sign the request with AWS SigV4."""
-        headers = {
-            "Content-Type": "application/json",
-            "X-API-Password": self.api_password
-        }
-        
-        request = AWSRequest(
-            method="POST",
-            url=self.endpoint,
-            data=json.dumps(payload),
-            headers=headers
-        )
-        SigV4Auth(self.credentials, "execute-api", self.region).add_auth(request)
-        return dict(request.headers), request.body
+    # No AWS signing needed for Lambda URL
 
     def _convert_messages_to_prompt(self, messages):
         """Convert messages format to a single prompt string."""
@@ -114,28 +79,30 @@ class BedrockBridge:
         return "\n\n".join(prompt_parts)
 
     def __call__(self, messages):
-        """Call the API with messages and return the response. Retries on 503 errors."""
+        """Call the Lambda API with messages and return the response. Implements retry logic for 503 errors."""
         import time
+        import requests
         prompt = self._convert_messages_to_prompt(messages)
-        payload = {"prompt": prompt}
-        headers, body = self._sign_request(payload)
-
         max_retries = 3
         for attempt in range(1, max_retries + 1):
             response = requests.post(
                 self.endpoint,
-                headers=headers,
-                data=body
+                headers={
+                    "Content-Type": "application/json",
+                    "X-API-Password": self.api_password,
+                },
+                json={
+                    "prompt": prompt,
+                    "max_tokens": 1024,
+                    "temperature": 0.1,
+                },
+                timeout=300,
             )
-            #print(f"BedrockBridge: API call attempt {attempt}, status code: {response.status_code}")
             if response.status_code != 503:
                 break
-            #print(f"⚠️  BedrockBridge: Received 503 Service Unavailable (attempt {attempt}/{max_retries}). Retrying in 5 seconds...")
             time.sleep(5)
-
         if not response.ok:
             raise Exception(f"API Error {response.status_code}: {response.text}")
-
         data = response.json()
         return data.get("response", "")
 
@@ -237,9 +204,7 @@ def get_llm():
     
     if use_bedrock:
         print("🔧 Using BedrockBridge for LLM calls")
-        profile = os.getenv("AWS_PROFILE")
-        region = os.getenv("AWS_REGION")
-        return BedrockBridge(profile=profile, region=region)
+        return BedrockBridge()
     else:
         print("🔧 Using FreeFlowLLM for LLM calls")
         return FreeFlowLLM()
@@ -1174,7 +1139,7 @@ def display_react_format_error(error: ValueError):
         ... except ValueError as e:
         ...     display_react_format_error(e)
     """
-    print(f"\n\n❌ FORMAT ERROR: {e}")
+    print(f"\n\n❌ FORMAT ERROR: {error}")
     print("\n🔍 This means the LLM output didn't match the ReAct format.")
     print("Expected format:")
     print("  Thought: [reasoning]")
@@ -1880,94 +1845,3 @@ class MCPServerBuilder:
         print("✅ Server stopped")
 
 
-# ============================================================
-# MCP CLIENT CONNECTION HELPER
-# ============================================================
-
-
-class MCPConnection:
-    """
-    Helper class to connect to any MCP server.
-    
-    Can connect to:
-    1. Local servers (via subprocess)
-    2. Remote servers (via URL - placeholder for company servers)
-    """
-    
-    def __init__(self):
-        self._clients = {}
-        self._async_clients = {}
-    
-    def connect_local(self, server_script: str = "run_mcp_server.py", 
-                      name: str = "local") -> "SyncMCPClient":
-        """
-        Connect to a local MCP server.
-        
-        Args:
-            server_script: Path to the server script
-            name: Friendly name for this connection
-            
-        Returns:
-            SyncMCPClient connected to the server
-        """
-        from stdio_mcp_client import StdioMCPClient, SyncMCPClient
-        
-        print(f"🔌 Connecting to local MCP server...")
-        
-        async_client = StdioMCPClient()
-        
-        async def connect():
-            return await async_client.connect(
-                command=sys.executable,
-                args=[server_script]
-            )
-        
-        loop = asyncio.get_event_loop()
-        tools = loop.run_until_complete(connect())
-        
-        client = SyncMCPClient(async_client)
-        self._clients[name] = client
-        self._async_clients[name] = async_client
-        
-        print(f"✅ Connected! Found {len(tools)} tools")
-        return client
-    
-    def connect_remote(self, url: str, name: str = "remote"):
-        """
-        Connect to a remote MCP server via URL.
-        
-        Args:
-            url: The server URL (e.g., company internal server)
-            name: Friendly name for this connection
-            
-        NOTE: This is a placeholder for connecting to company MCP servers.
-        The actual implementation will be provided when the URL is available.
-        """
-        print(f"🌐 Remote MCP Connection")
-        print(f"   URL: {url}")
-        print(f"   Name: {name}")
-        print(f"\n⚠️  Remote connection not yet implemented.")
-        print(f"   This will connect to the company MCP server when available.")
-        return None
-    
-    def get_client(self, name: str = "local"):
-        """Get a connected client by name."""
-        return self._clients.get(name)
-    
-    def disconnect(self, name: str = "local"):
-        """Disconnect a client."""
-        if name in self._async_clients:
-            async def close():
-                await self._async_clients[name].close()
-            
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(close())
-            
-            del self._clients[name]
-            del self._async_clients[name]
-            print(f"✅ Disconnected from '{name}'")
-    
-    def disconnect_all(self):
-        """Disconnect all clients."""
-        for name in list(self._async_clients.keys()):
-            self.disconnect(name)
