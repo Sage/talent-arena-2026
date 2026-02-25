@@ -1,0 +1,168 @@
+SALES FORECAST - Q1 2026 (JAN-MAR)
+====================================
+
+Forecast Date: January 19, 2026
+Model: Time Series Analysis + Market Intelligence
+Confidence Level: 85%
+
+EXECUTIVE SUMMARY
+-----------------
+Q1 2026 forecast projects $2.7M in revenue (+11% vs Q4 2025) driven by
+new product launches and enterprise customer expansion. Conservative scenario
+accounts for ongoing supply chain constraints.
+
+Q1 2026 REVENUE FORECAST
+-------------------------
+
+Base Case (Most Likely): $2,700,000
+- Probability: 60%
+- Growth vs Q4 2025: +11%
+- Growth vs Q1 2025: +18%
+
+Optimistic Case: $2,950,000
+- Probability: 20%
+- Growth vs Q4 2025: +21%
+- Assumes: Widget Pro supply resolved, new product strong launch
+
+Conservative Case: $2,350,000
+- Probability: 20%
+- Growth vs Q4 2025: -4%
+- Assumes: Extended Widget Pro shortages, competitive pressure
+
+MONTHLY BREAKDOWN (Base Case)
+------------------------------
+
+January 2026: $825,000
+- Normal seasonal dip post-holidays
+- Widget Pro constraints limiting upside
+- Cloud Connect demand steady
+
+February 2026: $870,000
+- Widget Pro supply improving
+- Valentine's promotion for Smart Sensor
+- Enterprise renewals peak period
+
+March 2026: $1,005,000
+- Super Tool Premium Edition launch
+- Q1-end budget flush from enterprise
+- Spring promotion campaign
+
+PRODUCT-LEVEL FORECAST (Q1 Total Units)
+----------------------------------------
+
+Widget Pro: 2,100 units | $628,000 revenue
+- Currently supply-constrained
+- Assuming partial resolution by February
+- Risk: Constrained to 1,800 units if supply issues persist
+
+Cloud Connect: 4,200 units | $630,000 revenue
+- Steady performer
+- Enterprise adoption accelerating
+- New integration features driving demand
+
+Smart Sensor: 3,800 units | $342,000 revenue
+- Competitive pressure increasing
+- Valentine's promo should boost units
+- New backup supplier onboarding
+
+Gadget Plus: 900 units | $180,000 revenue
+- Mature product, stable demand
+- Generation 2 maintaining interest
+- Price pressure from competitors
+
+Super Tool: 6,500 units | $325,000 revenue
+- Including new Premium Edition (1,500 units)
+- Strong value proposition
+- Distribution expanding
+
+OTHER PRODUCTS: $595,000 revenue
+- Accessories, cables, adapters
+- Replacement parts
+- Service packages
+
+REGIONAL FORECAST (Q1 Base Case)
+---------------------------------
+
+EMEA: $1,080,000 (40%)
+- Strong enterprise pipeline
+- Currency stability improving margins
+- Germany and UK leading growth
+
+Americas: $945,000 (35%)
+- Mature market, steady growth
+- New SMB segment focus
+- Super Tool Premium resonating
+
+APAC: $675,000 (25%)
+- Fast-growing region
+- E-commerce penetration increasing
+- Competition intense but manageable
+
+CHANNEL FORECAST
+----------------
+
+Direct/E-commerce: $1,620,000 (60%)
+- Highest margin channel
+- Website optimization driving conversion
+- Mobile app improvements showing results
+
+Enterprise Sales: $810,000 (30%)
+- Large deal pipeline strong
+- 8 opportunities >$50K in late stages
+- Longer sales cycles
+
+Partners/Resellers: $270,000 (10%)
+- Channel development ongoing
+- 5 new partners onboarded Q4
+- Lower priority but strategic
+
+KEY ASSUMPTIONS
+---------------
+1. Widget Pro supply improves 50% by end of February
+2. No major competitive product launches
+3. Super Tool Premium achieves 1,500 units (conservative for new product)
+4. Economic conditions remain stable
+5. No significant currency fluctuations
+6. Marketing spend as planned ($185K/month)
+7. Sales team at full strength (no attrition)
+
+RISK FACTORS (Potential Downside)
+----------------------------------
+- Extended Widget Pro supply constraints (-$150K)
+- Super Tool Premium launch disappoints (-$75K)
+- Major competitor pricing action (-$100K)
+- Economic downturn affecting enterprise budgets (-$200K)
+- Currency volatility in EMEA (-$50K)
+
+UPSIDE OPPORTUNITIES
+--------------------
+- Early resolution of Widget Pro supply (+$180K)
+- Super Tool Premium exceeds expectations (+$120K)
+- Enterprise pipeline converts faster (+$150K)
+- Market share gains in Smart Sensor (+$90K)
+- New large enterprise customer lands (+$200K)
+
+SALES TARGETS BY TEAM MEMBER
+-----------------------------
+Enterprise Team (4 reps): $675K (avg $56K/month per rep)
+SMB Team (6 reps): $405K (avg $22.5K/month per rep)
+Inside Sales (3 reps): $270K (avg $30K/month per rep)
+
+E-commerce (managed): $1,350K (organic + paid acquisition)
+
+QUARTERLY PERFORMANCE TRACKING
+-------------------------------
+Week 1-4:   Target $825K  | Actual: $__ | Variance: __
+Week 5-8:   Target $870K  | Actual: $__ | Variance: __
+Week 9-13:  Target $1,005K | Actual: $__ | Variance: __
+
+Total Q1:   Target $2,700K | Actual: $__ | Variance: __
+
+RECOMMENDATIONS FOR SALES LEADERSHIP
+------------------------------------
+1. Prioritize Widget Pro customer communication about availability
+2. Focus enterprise team on large Q1-closing opportunities
+3. Accelerate Super Tool Premium launch marketing
+4. Implement weekly forecast review meetings
+5. Increase Smart Sensor promotional activities in February
+6. Prepare contingency plans if <$2.5M by end of February

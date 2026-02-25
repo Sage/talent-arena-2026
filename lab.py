@@ -1,18 +1,117 @@
 """
-Reusable ReAct Agent Framework using FreeFlow LLM
+MCP Workshop Lab - AI Agents & Model Context Protocol
+
+This module provides:
+1. LLM Wrappers (BedrockBridge, FreeFlowLLM)
+2. ReAct Agent Engine
+3. Traditional coupled tools (Tools class)
+4. AI Agent that can work with coupled tools OR MCP servers
+5. MCPServerBuilder for easy MCP server creation
+6. Pre-defined tool packs (filesystem, database, actions)
 """
 
+import asyncio
 import inspect
+import json
+import os
 import re
+import subprocess
+import sys
+from dataclasses import dataclass
+from typing import Any, Callable
 
+import boto3
+import requests
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
 from dotenv import load_dotenv
 from freeflow_llm import FreeFlowClient
 
 load_dotenv()
 
+# Apply nest_asyncio for notebook compatibility
+try:
+    import nest_asyncio
+    nest_asyncio.apply()
+except ImportError:
+    pass
+
 # ============================================================
 # LLM WRAPPER
 # ============================================================
+
+
+class BedrockBridge:
+    """
+    Bridge to connect to Sage Bedrock via API Gateway with IAM authentication.
+    """
+
+    def __init__(self, api_url=None):
+        """
+        Initialize Bridge for Sage public Lambda Function URL only.
+        Only FUNCTION_URL is supported. Implements retry logic for Lambda 503 errors.
+        """
+        self.api_url = api_url or os.getenv("FUNCTION_URL")
+        if not self.api_url:
+            raise ValueError("FUNCTION_URL must be provided or set in environment")
+
+        self.api_password = os.getenv("API_PASSWORD")
+        if not self.api_password:
+            raise ValueError("API_PASSWORD must be set in environment")
+
+        self.endpoint = f"{self.api_url.rstrip('/')}/v1/query"
+
+    # No AWS signing needed for Lambda URL
+
+    def _convert_messages_to_prompt(self, messages):
+        """Convert messages format to a single prompt string."""
+        # Combine system and user messages into a single prompt
+        prompt_parts = []
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if role == "system":
+                prompt_parts.append(f"System: {content}")
+            elif role == "user":
+                prompt_parts.append(f"User: {content}")
+            elif role == "assistant":
+                prompt_parts.append(f"Assistant: {content}")
+        return "\n\n".join(prompt_parts)
+
+    def __call__(self, messages):
+        """Call the Lambda API with messages and return the response. Implements retry logic for 503 errors."""
+        import time
+        import requests
+        prompt = self._convert_messages_to_prompt(messages)
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            response = requests.post(
+                self.endpoint,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-API-Password": self.api_password,
+                },
+                json={
+                    "prompt": prompt,
+                    "max_tokens": 1024,
+                    "temperature": 0.1,
+                },
+                timeout=300,
+            )
+            if response.status_code != 503:
+                break
+            time.sleep(5)
+        if not response.ok:
+            raise Exception(f"API Error {response.status_code}: {response.text}")
+        data = response.json()
+        return data.get("response", "")
+
+    def stream(self, messages):
+        """Stream the API response (note: this may not support streaming)."""
+        # Most Lambda APIs don't support streaming, so we'll return the full response
+        response = self(messages)
+        # Simulate streaming by yielding the full response
+        yield response
 
 
 class FreeFlowLLM:
@@ -88,6 +187,29 @@ class FreeFlowLLM:
             raise RuntimeError(error_msg) from e
 
 
+def get_llm():
+    """
+    Factory function to create the appropriate LLM based on environment configuration.
+    
+    Set USE_BEDROCK=true in your .env file to use BedrockBridge.
+    Otherwise, defaults to FreeFlowLLM.
+    
+    Required environment variables for BedrockBridge:
+    - USE_BEDROCK=true
+    - BEDROCK_API_URL=https://your-api-url.execute-api.region.amazonaws.com
+    - API_PASSWORD=your-password
+    - Optional: AWS_PROFILE, AWS_REGION
+    """
+    use_bedrock = os.getenv("USE_BEDROCK", "true").lower() in ("true", "1", "yes")
+    
+    if use_bedrock:
+        print("🔧 Using BedrockBridge for LLM calls")
+        return BedrockBridge()
+    else:
+        print("🔧 Using FreeFlowLLM for LLM calls")
+        return FreeFlowLLM()
+
+
 # ============================================================
 # REACT ENGINE
 # ============================================================
@@ -116,12 +238,18 @@ class ReActEngine:
         ...     print(output)
     """
 
-    def __init__(self, llm, tools, max_iterations=5):
+    def __init__(self, llm, tools, max_iterations=15):
         self.llm = llm
         self.tools = tools
         self.max_iterations = max_iterations
 
     def _tool_list(self):
+        """Get formatted tool list with parameters if available."""
+        # Check if tools object has detailed documentation method
+        if hasattr(self.tools, 'get_tools_documentation'):
+            return self.tools.get_tools_documentation()
+        
+        # Fallback to simple list of tool names
         """
         Generate a formatted list of available tools for the LLM.
         
@@ -139,39 +267,36 @@ class ReActEngine:
         )
 
     def _parse(self, output: str):
-        """
-        Parse the LLM's output to extract actions or final answers.
+        # """
+        # Parse the LLM's output to extract actions or final answers.
         
-        The LLM is expected to follow the ReAct format:
-        - For actions: "Action: tool_name\nAction Input: input_value"
-        - For final answers: "Final Answer: the answer text"
+        # The LLM is expected to follow the ReAct format:
+        # - For actions: "Action: tool_name\nAction Input: input_value"
+        # - For final answers: "Final Answer: the answer text"
         
-        Args:
-            output (str): Raw text output from the LLM.
+        # Args:
+        #     output (str): Raw text output from the LLM.
         
-        Returns:
-            dict: Parsed output in one of two formats:
-                  - {"type": "final", "content": str} for final answers
-                  - {"type": "action", "tool": str, "input": str} for tool actions
+        # Returns:
+        #     dict: Parsed output in one of two formats:
+        #           - {"type": "final", "content": str} for final answers
+        #           - {"type": "action", "tool": str, "input": str} for tool actions
         
-        Raises:
-            ValueError: If the output doesn't match the expected ReAct format.
+        # Raises:
+        #     ValueError: If the output doesn't match the expected ReAct format.
         
-        Examples:
-            >>> engine._parse("Action: get_stock_price\nAction Input: AAPL")
-            {"type": "action", "tool": "get_stock_price", "input": "AAPL"}
+        # Examples:
+        #     >>> engine._parse("Action: get_stock_price\nAction Input: AAPL")
+        #     {"type": "action", "tool": "get_stock_price", "input": "AAPL"}
             
-            >>> engine._parse("Final Answer: The price is $150")
-            {"type": "final", "content": "The price is $150"}
-        """
-        if "Final Answer:" in output:
-            return {
-                "type": "final",
-                "content": output.split("Final Answer:")[-1].strip(),
-            }
-
-        action_match = re.search(r"Action:\s*(.*)", output)
-        input_match = re.search(r"Action Input:\s*(.*)", output)
+        #     >>> engine._parse("Final Answer: The price is $150")
+        #     {"type": "final", "content": "The price is $150"}
+        #"""
+        # Prefer parsing an Action (tool call) first. Many LLMs include both
+        # action and a final answer in the same response; if we accept the
+        # final answer too early we never call the requested tool.
+        action_match = re.search(r"Action:\s*(.*?)(?:\n|$)", output, re.IGNORECASE)
+        input_match = re.search(r"Action Input:\s*(.*?)(?:\n|$)", output, re.IGNORECASE)
 
         if action_match and input_match:
             return {
@@ -180,42 +305,22 @@ class ReActEngine:
                 "input": input_match.group(1).strip(),
             }
 
+        # If no action found, fall back to a Final Answer (allow multiline answers)
+        final_match = re.search(r"Final Answer:\s*(.*)$", output, re.IGNORECASE | re.DOTALL)
+        if final_match:
+            return {
+                "type": "final",
+                "content": final_match.group(1).strip(),
+            }
+
         raise ValueError("Invalid LLM format")
 
     def run(self, system_prompt: str, user_input: str, stream_final=False):
-        """
-        Execute the ReAct reasoning loop.
-        
-        Iteratively prompts the LLM to think, act, and observe until a final answer
-        is reached or max_iterations is exceeded. Each iteration:
-        1. Sends the system prompt, question, and scratchpad to the LLM
-        2. Parses the LLM's response for actions or final answer
-        3. Executes tools if actions are requested
-        4. Updates the scratchpad with observations
-        5. Yields outputs for visibility
-        
-        Args:
-            system_prompt (str): The agent's role and behavioral instructions.
-            user_input (str): The user's question or task.
-            stream_final (bool): If True, streams the final answer token by token.
-                                If False, returns the final answer as a single chunk.
-        
-        Yields:
-            str: Status updates including:
-                 - LLM reasoning outputs
-                 - Tool actions and observations
-                 - Final answer (streamed or complete)
-                 - Error messages if max iterations reached
-        
-        Examples:
-            >>> for chunk in engine.run("You are a stock analyst", "AAPL stock price"):
-            ...     print(chunk)
-        """
         scratchpad = ""
         system_message = f"""
-                        {system_prompt}
+{system_prompt}
 
-                        You have access to the following tools:
+You have access to the following tools:
                         {self._tool_list()}
 
                         Use EXACTLY this format:
@@ -227,87 +332,55 @@ class ReActEngine:
                         Final Answer:
                         """
 
-        for iteration in range(self.max_iterations):
-            try:
-                messages = [
-                    {"role": "system", "content": system_message},
-                    {"role": "user", "content": f"Question: {user_input}\n\n{scratchpad}"},
-                ]
-                llm_output = self.llm(messages)
-                
-                try:
-                    parsed = self._parse(llm_output)
-                except ValueError as e:
-                    error_msg = f"⚠️  Parse Error: {str(e)}\nLLM Output was: {llm_output}\n"
-                    yield error_msg
-                    
-                    # Add actionable feedback to scratchpad so LLM can self-correct
-                    scratchpad += f"\nObservation: Your output format was incorrect. {str(e)}\n"
-                    scratchpad += "Remember to use EXACTLY this format:\n"
-                    scratchpad += "Thought: [your reasoning]\n"
-                    scratchpad += "Action: [tool_name]\n"
-                    scratchpad += "Action Input: [input_value]\n"
-                    scratchpad += "OR if you have the final answer:\n"
-                    scratchpad += "Final Answer: [your answer]\n"
-                    continue
 
-                if parsed["type"] == "final":
-                    # Only yield the clean final answer, not the raw LLM output
-                    yield f"Final Answer: {parsed['content']}\n"
-                    if stream_final:
-                        try:
-                            stream_messages = [
-                                {
-                                    "role": "system",
-                                    "content": "Return only the final answer text.",
-                                },
-                                {"role": "user", "content": parsed["content"]},
-                            ]
-                            for chunk in self.llm.stream(stream_messages):
-                                yield chunk
-                        except Exception as e:
-                            yield f"\n⚠️  Streaming error: {str(e)}\n"
-                    return
+        for _ in range(self.max_iterations):
+            messages = [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": f"Question: {user_input}\n\n{scratchpad}"},
+            ]
+            llm_output = self.llm(messages)
+            parsed = self._parse(llm_output)
 
-                elif parsed["type"] == "action":
-                    # Yield LLM output for visibility during action steps
-                    yield f"LLM Output: {llm_output}\n"
-                    
-                    tool_name = parsed["tool"]
-                    tool_input = parsed["input"]
-                    tool = getattr(self.tools, tool_name, None)
-                    
-                    # Verify the tool exists and is a bound method (not a class attribute)
-                    if not tool or not inspect.ismethod(tool):
-                        error_msg = f"Tool '{tool_name}' not found. Available tools: {self._tool_list()}"
-                        yield f"⚠️  {error_msg}\n"
-                        scratchpad += f"\nObservation: Error - {error_msg}\n"
-                        continue
-                    
-                    try:
-                        observation = tool(tool_input)
-                        step = f"Action: {tool_name}\nAction Input: {tool_input}\nObservation: {observation}\n"
-                        yield step
-                        scratchpad += f"""
-                                        Thought:
-                                        Action: {tool_name}
-                                        Action Input: {tool_input}
-                                        Observation: {observation}
-                                        """
-                    except Exception as e:
-                        error_msg = f"Tool execution failed: {str(e)}"
-                        yield f"⚠️  {error_msg}\n"
-                        scratchpad += f"\nObservation: Error - {error_msg}\n"
-                        
-            except RuntimeError as e:
-                yield f"⚠️  LLM Error on iteration {iteration + 1}: {str(e)}\n"
-                yield "Stopping due to LLM failure.\n"
+            # Only yield the LLM output up to Action Input (never hallucinated Observation)
+            if parsed["type"] == "final":
+                yield f"Final Answer: {parsed['content']}\n"
+                if stream_final:
+                    stream_messages = [
+                        {
+                            "role": "system",
+                            "content": "Return only the final answer text.",
+                        },
+                        {"role": "user", "content": parsed["content"]},
+                    ]
+                    for chunk in self.llm.stream(stream_messages):
+                        yield chunk
                 return
-            except Exception as e:
-                yield f"⚠️  Unexpected error on iteration {iteration + 1}: {str(e)}\n"
-                continue
+
+            elif parsed["type"] == "action":
+                tool_name = parsed["tool"]
+                tool_input = parsed["input"]
                 
+                # Extract and yield the Thought (reasoning) before the action
+                thought_match = re.search(r"Thought:\s*(.*?)(?=Action:|$)", llm_output, re.IGNORECASE | re.DOTALL)
+                if thought_match:
+                    thought_text = thought_match.group(1).strip()
+                    yield f"Thought: {thought_text}\n"
+                
+                tool = getattr(self.tools, tool_name, None)
+                if not tool:
+                    raise ValueError(f"Tool {tool_name} not found")
+                observation = tool(tool_input)
+                step = f"Action: {tool_name}\nAction Input: {tool_input}\nObservation: {observation}\n"
+                yield step
+                scratchpad += f"""
+                                Thought:
+                                Action: {tool_name}
+                                Action Input: {tool_input}
+                                Observation: {observation}
+                                """
         yield "Max iterations reached without final answer.\n"
+
+
 
 
 # ============================================================
@@ -340,7 +413,7 @@ class BaseAgent:
 
     def __init__(self, tools):
         self.tools = tools
-        self.llm = FreeFlowLLM()
+        self.llm = get_llm()
         self.engine = ReActEngine(self.llm, tools)
 
     @property
@@ -410,38 +483,332 @@ class BaseAgent:
 # TOOLS
 # ============================================================
 
+# Embedded demo database copied from mcp_servers so the coupled Tools
+# have the same sample data and behavior as the MCP database tools.
+SAMPLE_PRODUCTS = [
+    {"id": 1, "name": "Widget Pro", "category": "Electronics", "price": 299.99, "stock": 150},
+    {"id": 2, "name": "Gadget Plus", "category": "Electronics", "price": 199.99, "stock": 75},
+    {"id": 3, "name": "Super Tool", "category": "Hardware", "price": 49.99, "stock": 500},
+    {"id": 4, "name": "Smart Sensor", "category": "IoT", "price": 89.99, "stock": 200},
+    {"id": 5, "name": "Cloud Connect", "category": "Software", "price": 149.99, "stock": 999},
+]
+
+SAMPLE_SALES = [
+    {"id": 1, "product_id": 1, "quantity": 33, "date": "2026-02-01", "region": "EMEA"},
+    {"id": 2, "product_id": 2, "quantity": 59, "date": "2026-02-05", "region": "Americas"},
+    {"id": 3, "product_id": 1, "quantity": 6, "date": "2026-02-10", "region": "APAC"},
+    {"id": 4, "product_id": 3, "quantity": 114, "date": "2026-02-12", "region": "EMEA"},
+    {"id": 5, "product_id": 4, "quantity": 23, "date": "2026-02-15", "region": "Americas"},
+    {"id": 6, "product_id": 5, "quantity": 57, "date": "2026-02-18", "region": "EMEA"},
+]
+
+
+def init_demo_database_local() -> "sqlite3.Connection":
+    """Initialize an in-memory SQLite database with the sample data.
+
+    This is a local copy so the `Tools` class can be self-contained
+    and behave the same as the MCP `DatabaseMCPServer`.
+    """
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        CREATE TABLE products (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            category TEXT NOT NULL,
+            price REAL NOT NULL,
+            stock INTEGER NOT NULL
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE sales (
+            id INTEGER PRIMARY KEY,
+            product_id INTEGER NOT NULL,
+            quantity INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            region TEXT NOT NULL,
+            FOREIGN KEY (product_id) REFERENCES products(id)
+        )
+        """
+    )
+
+    for p in SAMPLE_PRODUCTS:
+        cursor.execute("INSERT INTO products VALUES (?, ?, ?, ?, ?)", (p["id"], p["name"], p["category"], p["price"], p["stock"]))
+
+    for s in SAMPLE_SALES:
+        cursor.execute("INSERT INTO sales VALUES (?, ?, ?, ?, ?)", (s["id"], s["product_id"], s["quantity"], s["date"], s["region"]))
+
+    conn.commit()
+    return conn
+
+
 
 class Tools:
-    """
-    Toolbox containing agent capabilities and actions.
+    # """
+    # Toolbox containing agent capabilities and actions.
     
-    This class provides a collection of tools that agents can use to interact
-    with external services, APIs, and data sources. Each method is automatically
-    discovered and made available to agents through the ReAct engine.
+    # This class provides a collection of tools that agents can use to interact
+    # with external services, APIs, and data sources. Each method is automatically
+    # discovered and made available to agents through the ReAct engine.
     
-    Available Tools:
-        - get_stock_price: Fetch real-time stock market data
-        - search_news: Search for recent news articles
-        - scrape_hacker_news: Get trending tech stories from Hacker News
-        - get_project_summary: Web search for project/topic information
-        - get_crypto_prices: Fetch cryptocurrency prices from Binance
-        - generate_chart: Create QuickChart visualization URLs
+    # Available Tools:
+    #     - get_stock_price: Fetch real-time stock market data
+    #     - search_news: Search for recent news articles
+    #     - scrape_hacker_news: Get trending tech stories from Hacker News
+    #     - get_project_summary: Web search for project/topic information
+    #     - get_crypto_prices: Fetch cryptocurrency prices from Binance
+    #     - generate_chart: Create QuickChart visualization URLs
     
-    Note:
-        New tools can be added by simply defining new methods in this class.
-        They will be automatically available to all agents.
+    # Note:
+    #     New tools can be added by simply defining new methods in this class.
+    #     They will be automatically available to all agents.
     
-    Examples:
-        >>> tools = Tools()
-        >>> price = tools.get_stock_price("AAPL")
-        >>> print(price)
-    """
+    # Examples:
+    #     >>> tools = Tools()
+    #     >>> price = tools.get_stock_price("AAPL")
+    #     >>> print(price)
+    # """
 
     import json
     import requests
     import yfinance
     from bs4 import BeautifulSoup
     from ddgs import DDGS
+    import sqlite3
+    from pathlib import Path
+    from datetime import datetime
+    import matplotlib
+    matplotlib.use('Agg')  # Non-interactive backend for saving charts
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import io
+    import base64
+
+    # Workshop tools that match MCP server tools (organized by tool pack)
+    traditional_tools = {
+        "database": ["query_products", "query_sales", "get_analytics"]
+    }
+    
+    # Legacy tools to ignore when displaying tools (not part of workshop)
+    legacy_tools = [
+        "get_stock_price",
+        "search_news",
+        "scrape_hacker_news",
+        "get_project_summary",
+        "get_crypto_prices",
+        "generate_chart"
+    ]
+    
+    def __init__(self):
+        """Initialize tools with database connection and logs."""
+        # Use local embedded demo database so Tools are self-contained
+        from pathlib import Path
+        
+        # Initialize database (local embedded copy)
+        self.conn = init_demo_database_local()
+        
+    def get_traditional_tools(self)-> list[str]:
+        """Get list of traditional tool names (for displaying in agent docs)."""
+        all_tools = []
+        for pack_tools in self.traditional_tools.values():
+            all_tools.extend(pack_tools)
+        return all_tools
+    def get_tools_list(self) -> list[str]:
+        """Get list of available tool names (includes all tools for market intelligence)."""
+        all_tools = []
+        # Include traditional tools
+        for pack_tools in self.traditional_tools.values():
+            all_tools.extend(pack_tools)
+        # Include legacy tools for market intelligence workshop
+        all_tools.extend(self.legacy_tools)
+        return all_tools
+    
+    def get_tool_pack(self, tool_name: str) -> str:
+        """Get the pack name for a given tool."""
+        for pack_name, tools in self.traditional_tools.items():
+            if tool_name in tools:
+                return pack_name
+        return "unknown"
+    
+    def get_tools_documentation(self) -> str:
+        """Get formatted documentation for all tools with pack names."""
+        tool_docs = []
+        # Document traditional tools
+        for pack_name, tools in self.traditional_tools.items():
+            for tool_name in tools:
+                if hasattr(self, tool_name):
+                    method = getattr(self, tool_name)
+                    doc = method.__doc__ or "No description"
+                    first_line = doc.strip().split('\n')[0]
+                    tool_docs.append(f"- {tool_name} [{pack_name}]: {first_line}")
+        
+        # Document legacy tools for market intelligence workshop
+        for tool_name in self.legacy_tools:
+            if hasattr(self, tool_name):
+                method = getattr(self, tool_name)
+                doc = method.__doc__ or "No description"
+                first_line = doc.strip().split('\n')[0]
+                tool_docs.append(f"- {tool_name}: {first_line}")
+        
+        return "\n".join(tool_docs)
+
+    
+
+    
+    def query_products(self, category=None, min_price=None, max_price=None, search=None):
+        """Query products database. Filter by category, price range, or search name."""
+        # Handle JSON input from ReAct engine
+        if category and isinstance(category, str) and category.strip().startswith("{"):
+            try:
+                params_dict = json.loads(category)
+                category = params_dict.get('category')
+                min_price = params_dict.get('min_price')
+                max_price = params_dict.get('max_price')
+                search = params_dict.get('search')
+            except (json.JSONDecodeError, AttributeError):
+                pass  # If parsing fails, use original parameters
+        
+        cursor = self.conn.cursor()
+        query = "SELECT * FROM products WHERE 1=1"
+        params = []
+        
+        if category:
+            query += " AND category = ?"
+            params.append(category)
+        if min_price:
+            query += " AND price >= ?"
+            params.append(min_price)
+        if max_price:
+            query += " AND price <= ?"
+            params.append(max_price)
+        if search:
+            query += " AND name LIKE ?"
+            params.append(f"%{search}%")
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        results = [dict(row) for row in rows]
+        return json.dumps(results, indent=2)
+    
+    def query_sales(self, region=None, product_id=None, start_date=None, end_date=None):
+        """Query sales data by region, date range, or product."""
+        # Handle JSON input from ReAct engine
+        if region and isinstance(region, str) and region.strip().startswith("{"):
+            try:
+                params_dict = json.loads(region)
+                region = params_dict.get('region')
+                product_id = params_dict.get('product_id')
+                start_date = params_dict.get('start_date')
+                end_date = params_dict.get('end_date')
+            except (json.JSONDecodeError, AttributeError):
+                pass  # If parsing fails, use original parameters
+        
+        cursor = self.conn.cursor()
+        query = """
+            SELECT s.*, p.name as product_name, p.price,
+                   (s.quantity * p.price) as total_value
+            FROM sales s
+            JOIN products p ON s.product_id = p.id
+            WHERE 1=1
+        """
+        params = []
+        
+        if region:
+            query += " AND s.region = ?"
+            params.append(region)
+        if product_id:
+            query += " AND s.product_id = ?"
+            params.append(product_id)
+        if start_date:
+            query += " AND s.date >= ?"
+            params.append(start_date)
+        if end_date:
+            query += " AND s.date <= ?"
+            params.append(end_date)
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        results = [dict(row) for row in rows]
+        return json.dumps(results, indent=2)
+    
+    def get_analytics(self, metric):
+        """Get analytics: revenue, top_products, sales_by_region, or inventory_value."""
+        # Handle JSON input from ReAct engine
+        if metric and isinstance(metric, str) and metric.strip().startswith("{"):
+            try:
+                params_dict = json.loads(metric)
+                metric = params_dict.get('metric')
+            except (json.JSONDecodeError, AttributeError):
+                pass  # If parsing fails, use original parameter
+        
+        cursor = self.conn.cursor()
+        
+        if metric == "revenue":
+            cursor.execute("""
+                SELECT SUM(s.quantity * p.price) as total_revenue,
+                       COUNT(*) as total_transactions,
+                       SUM(s.quantity) as total_units_sold
+                FROM sales s
+                JOIN products p ON s.product_id = p.id
+            """)
+            row = cursor.fetchone()
+            result = dict(row)
+        
+        elif metric == "top_products":
+            cursor.execute("""
+                SELECT p.name, p.category,
+                       SUM(s.quantity) as units_sold,
+                       SUM(s.quantity * p.price) as revenue
+                FROM sales s
+                JOIN products p ON s.product_id = p.id
+                GROUP BY p.id
+                ORDER BY revenue DESC
+                LIMIT 5
+            """)
+            rows = cursor.fetchall()
+            result = [dict(row) for row in rows]
+        
+        elif metric == "sales_by_region":
+            cursor.execute("""
+                SELECT s.region,
+                       COUNT(*) as transactions,
+                       SUM(s.quantity) as units_sold,
+                       SUM(s.quantity * p.price) as revenue
+                FROM sales s
+                JOIN products p ON s.product_id = p.id
+                GROUP BY s.region
+                ORDER BY revenue DESC
+            """)
+            rows = cursor.fetchall()
+            result = [dict(row) for row in rows]
+        
+        elif metric == "inventory_value":
+            cursor.execute("""
+                SELECT SUM(price * stock) as total_inventory_value,
+                       SUM(stock) as total_units,
+                       COUNT(*) as product_count
+                FROM products
+            """)
+            row = cursor.fetchone()
+            result = dict(row)
+        
+        else:
+            result = {"error": f"Unknown metric: {metric}"}
+        
+        return json.dumps(result, indent=2)
+    
+    
+    
+    # ============================================================
+    # LEGACY TOOLS (for backwards compatibility with examples)
+    # ============================================================
 
     def get_stock_price(self, symbol):
         """
@@ -766,6 +1133,35 @@ class Tools:
 # NOTEBOOK HELPERS
 # ============================================================
 
+def display_react_format_error(error: ValueError):
+    """
+    Display helpful error message when LLM output doesn't match ReAct format.
+    
+    This is a reusable helper for notebook cells to avoid repeating error
+    handling boilerplate. The error typically occurs when the LLM outputs
+    text without proper 'Thought:', 'Action:', 'Action Input:', or 'Final Answer:' markers.
+    
+    Args:
+        error (ValueError): The ValueError exception from ReActEngine._parse()
+    
+    Examples:
+        >>> try:
+        ...     for output in agent.run(query):
+        ...         print(output)
+        ... except ValueError as e:
+        ...     display_react_format_error(e)
+    """
+    print(f"\n\n❌ FORMAT ERROR: {error}")
+    print("\n🔍 This means the LLM output didn't match the ReAct format.")
+    print("Expected format:")
+    print("  Thought: [reasoning]")
+    print("  Action: [tool_name]")
+    print("  Action Input: [input_value]")
+    print("\nOR")
+    print("  Final Answer: [answer]")
+    print("\n💡 Try re-running the cell - sometimes the LLM needs a second attempt.")
+    print("   If it persists, check your system_prompt for clarity.")
+
 
 def test_all_tools(verbose=True):
     """
@@ -898,3 +1294,564 @@ def test_all_tools(verbose=True):
         print("=" * 70)
     
     return results
+
+# ============================================================
+# AI AGENT - Works with coupled tools OR MCP servers
+# ============================================================
+
+
+class AIAgent(BaseAgent):
+    """
+    AI Agent that can use either:
+    1. Coupled tools (traditional approach - tools are tightly bound)
+    2. MCP tools (decoupled approach - tools come from external servers)
+    
+    This demonstrates the difference between coupled and decoupled architectures.
+    """
+    
+    def __init__(self, tools=None, name: str = "AI Agent"):
+        """
+        Initialize the AI Agent.
+        
+        Args:
+            tools: A tools object with callable methods. Can be:
+                   - Tools instance (coupled)
+                   - MCPToolsWrapper instance (decoupled via MCP)
+                   - None (no tools available)
+            name: Display name for the agent
+        """
+        self.name = name
+        self.tools = tools
+        self.llm = get_llm()
+        self.engine = None
+        if tools:
+            self.engine = ReActEngine(self.llm, tools)
+    
+    @property
+    def system_prompt(self) -> str:
+        return """You are a helpful AI AGENT that has access to some tools or MCP Server. Answer questions accurately and concisely. You will be passed a user query, and your list of tools. 
+        IMPORTANT, if your list of tools is empty, EXPLICLTLY STATE THAT NO TOOLS ARE AVAILABLE AND DO NOT ATTEMPT TO USE ANY TOOLS.
+Always decide if you need to use a tool before answering. If a tool can help you get the information you need, use it!
+
+CRITICAL: When you need to use a tool, output ONLY these three lines and then wait until the tool returns the results. DO NOT write anything else until you have the tool results.
+
+Thought: [your reasoning about what tool to use]
+Action: [tool name]
+Action Input: {"param_name": "value"}
+
+DO NOT write anything after Action Input UNTIL you have received the results of the tool.
+Once you have received the tool results, you can use that information to answer the question or decide to use another tool if needed. This is where you STATE YOUR OBSERVATION and can REASON about the results before taking your next action.
+DO NOT generate an Observation UNTIL YOU HAVE TO TOOL RESULTS - the system will execute the tool and provide real results.
+DO NOT generate a Final Answer until you have received actual tool results.
+NEVER make up or hallucinate data. ALWAYS wait for the real Observation from the system.
+
+THE OUTPUT OF THE LLM WILL BE PRINTED TO THE USER AS 
+    THOUGHT:
+    ACTION:
+    ACTION INPUT:
+    OBSERVATION: (ONLY ONCE YOU ARE GIVEN TOOL RESULTS)
+    EITHER ANOTHER THOUGHT/ACTION/INPUT OR THE FINAL ANSWER.
+
+After the system provides the Observation with real tool results, you may then:
+- Use another tool (output Thought/Action/Action Input and stop)
+- OR provide your final answer: Final Answer: [your answer based on actual results]
+
+JSON FORMATTING RULES:
+- Action Input MUST be valid JSON on a single line
+- Use the EXACT parameter names shown in the tool's Parameters list
+- Always use double quotes for JSON strings
+- Example: Action Input: {"path": "files/"}
+"""
+    
+    def get_tools_list(self) -> list[str]:
+        """Get list of available tool names."""
+        if not self.tools:
+            return []
+        
+        if hasattr(self.tools, 'get_traditional_tools'):
+            return self.tools.get_traditional_tools()
+        
+        # Fallback: introspect the tools object
+        # return [
+        #     name for name in dir(self.tools)
+        #     if not name.startswith("_") and callable(getattr(self.tools, name))
+        # ]
+    
+    def get_tools_documentation(self) -> str:
+        """Get formatted documentation for all tools."""
+        if not self.tools:
+            return "(No tools available)"
+        
+        if hasattr(self.tools, 'get_tools_documentation'):
+            return self.tools.get_tools_documentation()
+        
+        # Fallback: generate basic documentation
+        tool_docs = []
+        for name in self.get_tools_list():
+            method = getattr(self.tools, name)
+            doc = method.__doc__ or "No description"
+            tool_docs.append(f"- {name}: {doc.strip().split(chr(10))[0]}")
+        return "\n".join(tool_docs)
+    
+    def show_tools(self):
+        """Display the agent's available tools with pack names."""
+        tools = self.get_tools_list()
+        print(f"🤖 {self.name}")
+        print(f"{'=' * 50}")
+        if tools:
+            print(f"📦 Available Tools ({len(tools)}):")
+            for tool in tools:
+                # Get pack name if available
+                pack_name = ""
+                if hasattr(self.tools, 'get_tool_pack'):
+                    pack_name = f" [{self.tools.get_tool_pack(tool)}]"
+                elif hasattr(self.tools, '_tool_packs'):
+                    # MCPToolsWrapper case
+                    pack_name = f" [{self.tools._tool_packs.get(tool, 'unknown')}]"
+                print(f"   • {tool}{pack_name}")
+            #print(f"\n📋 Tool Documentation:")
+            #print(self.get_tools_documentation())
+        else:
+            print("⚠️  No tools attached to this agent!")
+            print("   The agent can only answer from its training data.")
+        print(f"{'=' * 50}")
+    
+    def attach_tools(self, tools):
+        """Attach or replace the tools for this agent."""
+        self.tools = tools
+        if tools:
+            self.engine = ReActEngine(self.llm, tools)
+        else:
+            self.engine = None
+        print(f"✅ Tools {'attached' if tools else 'removed'} from {self.name}")
+    
+    def remove_tools(self):
+        """Remove all tools from this agent."""
+        self.attach_tools(None)
+    
+    def run(self, question: str, verbose: bool = True):
+        """
+        Run the agent on a question.
+        
+        Args:
+            question: The user's question
+            verbose: Whether to print step-by-step output
+        """
+        print(f"\n🤖 {self.name} starting...\n")
+        print("=" * 70)
+        
+        if not self.engine or not self.tools:
+            # No tools - just use LLM directly
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": question}
+            ]
+            response = self.llm(messages)
+            if verbose:
+                print(f"💭 Response (no tools available):\n{response}")
+            print("=" * 70)
+            print("\n✅ Agent finished!")
+            return response
+        
+        # Use ReAct engine with tools
+        full_output = []
+        for step in self.engine.run(self.system_prompt, question, stream_final=False): #False
+            if verbose:
+                print(step, end="")
+            full_output.append(step)
+        
+        print("=" * 70)
+        print("\n✅ Agent finished!")
+        # return "".join(full_output)
+        return
+
+
+class EmptyTools:
+    """
+    Placeholder tools object with no tools.
+    Used to demonstrate an agent without capabilities.
+    """
+    
+    def get_tools_list(self) -> list[str]:
+        return []
+    
+    def get_tools_documentation(self) -> str:
+        return "(No tools available)"
+
+
+# ============================================================
+# MCP TOOLS WRAPPER - Connects AI Agent to MCP Server
+# ============================================================
+
+
+class MCPToolsWrapper:
+    """
+    Wraps an MCP client to provide a tools interface for the AI Agent.
+    
+    This allows the agent to use MCP server tools as if they were local methods,
+    demonstrating the decoupled architecture.
+    """
+    
+    def __init__(self, mcp_client, tool_packs: list[str] = None):
+        """
+        Initialize with an MCP client.
+        
+        Args:
+            mcp_client: A SyncMCPClient or similar with call_tool method
+            tool_packs: Optional list of tool pack names that were used
+        """
+        self._client = mcp_client
+        self._tools_cache = {}
+        self._tool_packs = {}  # Maps tool name to pack name
+        self._enabled_packs = tool_packs or []
+        self._setup_tools()
+    
+    def _setup_tools(self):
+        """Dynamically create methods for each MCP tool."""
+        for tool_name in self._client.get_tools_list():
+            # Create a closure to capture tool_name
+            def make_tool_method(name):
+                def tool_method(args_str):
+                    args = self._parse_args(args_str)
+                    # Check for parse errors and return helpful message
+                    if "_parse_error" in args:
+                        return f"❌ Parameter Parse Error: {args['_parse_error']}\n\nPlease provide valid JSON with the correct parameter names."
+                    return self._client.call_tool(name, args)
+                tool_method.__doc__ = f"MCP Tool: {name}"
+                return tool_method
+            
+            setattr(self, tool_name, make_tool_method(tool_name))
+            self._tools_cache[tool_name] = getattr(self, tool_name)
+            
+            # Map tool to its pack
+            pack_name = self._find_tool_pack(tool_name)
+            self._tool_packs[tool_name] = pack_name
+    
+    def _find_tool_pack(self, tool_name: str) -> str:
+        """Find which pack a tool belongs to."""
+        for pack_name, pack in TOOL_PACKS.items():
+            if tool_name in pack.tools:
+                return pack_name
+        return "unknown"
+    
+    def get_tool_pack(self, tool_name: str) -> str:
+        """Get the pack name for a given tool."""
+        return self._tool_packs.get(tool_name, "unknown")
+    
+    def _parse_args(self, args_str) -> dict:
+        """Parse JSON string arguments into dict."""
+        if isinstance(args_str, dict):
+            return args_str
+        if isinstance(args_str, str):
+            args_str = args_str.strip()
+            # Try to parse as JSON
+            if args_str.startswith("{"):
+                try:
+                    return json.loads(args_str)
+                except json.JSONDecodeError as e:
+                    # Return error info instead of silently failing
+                    return {"_parse_error": f"Invalid JSON: {str(e)}. Input was: {args_str[:100]}"}
+            # If it doesn't look like JSON, return parse error
+            return {"_parse_error": f"Expected JSON object starting with '{{', got: {args_str[:100]}"}
+        return {}
+    
+    def get_tools_list(self) -> list[str]:
+        """Get list of available tool names."""
+        return self._client.get_tools_list()
+    
+    def get_tools_documentation(self) -> str:
+        """Get formatted documentation for all tools with pack names and parameter schemas."""
+        # Use the client's tool documentation which includes full parameter schemas
+        if hasattr(self._client, 'tools') and self._client.tools:
+            docs = []
+            for tool_name in self.get_tools_list():
+                pack_name = self.get_tool_pack(tool_name)
+                if tool_name in self._client.tools:
+                    # Get the full formatted documentation including parameters
+                    tool = self._client.tools[tool_name]
+                    tool_doc = tool.format_for_llm()
+                    # Add pack name to the first line
+                    lines = tool_doc.split('\n')
+                    if lines:
+                        # Insert pack name after tool name
+                        first_line = lines[0].replace(f"- {tool_name}:", f"- {tool_name} [{pack_name}]:")
+                        lines[0] = first_line
+                    docs.append('\n'.join(lines))
+                else:
+                    docs.append(f"- {tool_name} [{pack_name}]: MCP Tool")
+            return "\n\n".join(docs)
+        
+        # Fallback if client doesn't have tools attribute
+        docs = []
+        for tool_name in self.get_tools_list():
+            pack_name = self.get_tool_pack(tool_name)
+            docs.append(f"- {tool_name} [{pack_name}]: MCP Tool")
+        return "\n".join(docs)
+
+
+# ============================================================
+# MCP SERVER BUILDER - Easy Server Creation for Workshop
+# ============================================================
+
+
+@dataclass
+class ToolPack:
+    """Pre-defined pack of tools that can be added to an MCP server."""
+    name: str
+    description: str
+    tools: list[str]
+    
+
+# Available tool packs for the workshop
+TOOL_PACKS = {
+    "filesystem": ToolPack(
+        name="Filesystem Tools",
+        description="Read files, list directories, get file info",
+        tools=["read_file", "list_directory", "get_file_info"]
+    ),
+    "database": ToolPack(
+        name="Database Tools", 
+        description="Query products, sales data, and analytics",
+        tools=["query_products", "query_sales", "get_analytics"]
+    ),
+    "actions": ToolPack(
+        name="Action Tools",
+        description="Generate reports, send notifications, create tasks",
+        tools=["generate_report", "send_notification", "create_task", "get_action_log"]
+    ),
+    "aggregator": ToolPack(
+        name="Aggregator Tools",
+        description="Transform and aggregate raw data for analysis",
+        tools=["aggregate_for_chart"]
+    ),
+    "grapher": ToolPack(
+        name="Grapher Tools",
+        description="Create visual charts from aggregated data",
+        tools=["create_chart"]
+    ),
+}
+
+# Maximum number of tool packs allowed (for workshop challenge)
+MAX_TOOL_PACKS = 3
+
+
+class TooManyToolPacksError(Exception):
+    """Raised when trying to add more than MAX_TOOL_PACKS tool packs."""
+    def __init__(self, current_packs: list[str], attempted_pack: str):
+        self.current_packs = current_packs
+        self.attempted_pack = attempted_pack
+        message = (
+            f"\n❌ TOO MANY TOOL PACKS!\n"
+            f"   Cannot add '{attempted_pack}': Maximum {MAX_TOOL_PACKS} tool packs allowed!\n"
+            f"   Current packs: {', '.join(current_packs)}\n"
+            f"\n💡 To fix this, remove a pack first:\n"
+            f"   server.remove_tool_pack('pack_name')\n"
+        )
+        super().__init__(message)
+
+
+class MCPServerBuilder:
+    """
+    Simple builder for creating MCP servers in the workshop.
+    
+    This provides a user-friendly interface for participants with
+    minimal technical ability to create and configure MCP servers.
+    
+    Usage:
+        server = MCPServerBuilder("my-server")
+        server.add_tool_pack("filesystem")
+        server.add_tool_pack("database")
+        server.start()
+    """
+    
+    def __init__(self, name: str = "workshop-server"):
+        """
+        Create a new MCP server builder.
+        
+        Args:
+            name: Name for your MCP server
+        """
+        self.name = name
+        self.tool_packs: list[str] = []
+        self._process = None
+        self._client = None
+        self._async_client = None
+        self._started = False
+        
+        print(f"🏗️  Created MCP Server Builder: '{name}'")
+        print(f"   Add tool packs using: server.add_tool_pack('name')")
+        print(f"   Available packs: {', '.join(TOOL_PACKS.keys())}")
+    
+    @staticmethod
+    def list_available_tool_packs():
+        """Show all available tool packs."""
+        print("\n📦 Available Tool Packs:")
+        print("=" * 50)
+        for key, pack in TOOL_PACKS.items():
+            print(f"\n   '{key}'")
+            print(f"   {pack.description}")
+            print(f"   Tools: {', '.join(pack.tools)}")
+        print("\n" + "=" * 50)
+    
+    def add_tool_pack(self, pack_name: str) -> "MCPServerBuilder":
+        """
+        Add a tool pack to your server.
+        
+        NOTE: Maximum of 3 tool packs allowed for the workshop challenge!
+        
+        Args:
+            pack_name: One of 'filesystem', 'database', 'actions', 'aggregator', or 'grapher'
+            
+        Returns:
+            self (for chaining)
+            
+        Raises:
+            TooManyToolPacksError: If trying to add more than MAX_TOOL_PACKS
+        """
+        if pack_name not in TOOL_PACKS:
+            print(f"❌ Unknown tool pack: '{pack_name}'")
+            print(f"   Available: {', '.join(TOOL_PACKS.keys())}")
+            return self
+        
+        if pack_name in self.tool_packs:
+            print(f"⚠️  Tool pack '{pack_name}' already added")
+            return self
+        
+        # Enforce tool pack limit for workshop challenge - RAISE EXCEPTION
+        if len(self.tool_packs) >= MAX_TOOL_PACKS:
+            raise TooManyToolPacksError(self.tool_packs, pack_name)
+        
+        self.tool_packs.append(pack_name)
+        pack = TOOL_PACKS[pack_name]
+        print(f"✅ Added '{pack.name}' to server")
+        print(f"   New tools: {', '.join(pack.tools)}")
+        print(f"   📊 Tool packs used: {len(self.tool_packs)}/{MAX_TOOL_PACKS}")
+        return self
+    
+    def remove_tool_pack(self, pack_name: str) -> "MCPServerBuilder":
+        """
+        Remove a tool pack from your server.
+        
+        Args:
+            pack_name: Name of the pack to remove
+            
+        Returns:
+            self (for chaining)
+        """
+        if pack_name not in self.tool_packs:
+            print(f"⚠️  Tool pack '{pack_name}' is not currently added")
+            return self
+        
+        self.tool_packs.remove(pack_name)
+        pack = TOOL_PACKS[pack_name]
+        print(f"🗑️  Removed '{pack.name}' from server")
+        print(f"   📊 Tool packs used: {len(self.tool_packs)}/{MAX_TOOL_PACKS}")
+        return self
+    
+    def show_configuration(self):
+        """Display the current server configuration."""
+        print(f"\n🖥️  MCP Server: {self.name}")
+        print("=" * 50)
+        
+        if not self.tool_packs:
+            print("⚠️  No tool packs added yet!")
+            print("   Use server.add_tool_pack('name') to add tools")
+        else:
+            print(f"📦 Tool Packs ({len(self.tool_packs)}):")
+            all_tools = []
+            for pack_name in self.tool_packs:
+                pack = TOOL_PACKS[pack_name]
+                print(f"\n   {pack.name}:")
+                for tool in pack.tools:
+                    print(f"      • {tool}")
+                    all_tools.append(tool)
+            print(f"\n📊 Total Tools: {len(all_tools)}")
+        
+        print("=" * 50)
+        if self._started:
+            print("🟢 Server Status: RUNNING")
+        else:
+            print("🔴 Server Status: NOT STARTED")
+            print("   Call server.start() to launch the server")
+    
+    def start(self) -> "SyncMCPClient":
+        """
+        Start the MCP server and return a connected client.
+        
+        Returns:
+            SyncMCPClient connected to the server
+        """
+        if self._started:
+            print("⚠️  Server already started!")
+            return self._client
+        
+        if not self.tool_packs:
+            print("❌ Cannot start: no tool packs added!")
+            print("   Use server.add_tool_pack('name') first")
+            return None
+        
+        # Import here to avoid circular imports
+        from stdio_mcp_client import StdioMCPClient, SyncMCPClient
+        
+        print(f"\n🚀 Starting MCP Server '{self.name}'...")
+        print("   (Running as subprocess in background)")
+        
+        # Create async client and connect
+        self._async_client = StdioMCPClient()
+        
+        # Build args based on selected tool packs
+        tool_packs_arg = ",".join(self.tool_packs)
+        
+        async def connect():
+            return await self._async_client.connect(
+                command=sys.executable,
+                args=["run_mcp_server.py", "--packs", tool_packs_arg]
+            )
+        
+        try:
+            loop = asyncio.get_event_loop()
+            tools = loop.run_until_complete(connect())
+            
+            self._client = SyncMCPClient(self._async_client)
+            self._started = True
+            
+            print(f"\n✅ Server started successfully!")
+            print(f"📦 Discovered {len(tools)} tools:")
+            print(f"\n🎯 Use server.get_client() to get the connected client")
+            
+            return self._client
+            
+        except Exception as e:
+            print(f"❌ Failed to start server: {e}")
+            return None
+    
+    def get_client(self):
+        """Get the connected MCP client."""
+        if not self._started:
+            print("⚠️  Server not started. Call server.start() first.")
+            return None
+        return self._client
+    
+    def stop(self):
+        """Stop the MCP server."""
+        if not self._started:
+            print("⚠️  Server not running")
+            return
+        
+        print("🛑 Stopping MCP server...")
+        
+        async def close():
+            await self._async_client.close()
+        
+        try:
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(close())
+        except:
+            pass
+        
+        self._started = False
+        self._client = None
+        self._async_client = None
+        print("✅ Server stopped")
+
+
