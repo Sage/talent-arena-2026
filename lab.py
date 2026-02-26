@@ -367,6 +367,7 @@ You have access to the following tools:
                     yield f"Thought: {thought_text}\n"
                 
                 tool = getattr(self.tools, tool_name, None)
+                
                 if not tool:
                     raise ValueError(f"Tool {tool_name} not found")
                 observation = tool(tool_input)
@@ -1367,16 +1368,17 @@ JSON FORMATTING RULES:
         """Get list of available tool names."""
         if not self.tools:
             return []
-        
+        # Prefer get_traditional_tools if present (for Tools)
         if hasattr(self.tools, 'get_traditional_tools'):
             return self.tools.get_traditional_tools()
-        
-        # Fallback: introspect the tools object
-        # return [
-        #     name for name in dir(self.tools)
-        #     if not name.startswith("_") and callable(getattr(self.tools, name))
-        # ]
-    
+        # Otherwise, use get_tools_list (for MCPToolsWrapper)
+        if hasattr(self.tools, 'get_tools_list'):
+            return self.tools.get_tools_list()
+        # Fallback: introspect
+        return [
+            name for name in dir(self.tools)
+            if not name.startswith("_") and callable(getattr(self.tools, name))
+        ]
     def get_tools_documentation(self) -> str:
         """Get formatted documentation for all tools."""
         if not self.tools:
@@ -1455,11 +1457,16 @@ JSON FORMATTING RULES:
         
         # Use ReAct engine with tools
         full_output = []
-        for step in self.engine.run(self.system_prompt, question, stream_final=False): #False
-            if verbose:
-                print(step, end="")
-            full_output.append(step)
-        
+        try:
+            for step in self.engine.run(self.system_prompt, question, stream_final=False):
+                if verbose:
+                    print(step, end="")
+                full_output.append(step)
+        except ValueError as e:
+            if "Invalid LLM format" in str(e):
+                print("\n❌ Sorry, I can't complete this request because the required tools or data are missing, or the LLM response was not in the expected format. Please check your tool packs and try again.")
+            else:
+                raise
         print("=" * 70)
         print("\n✅ Agent finished!")
         # return "".join(full_output)
