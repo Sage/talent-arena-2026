@@ -51,13 +51,13 @@ class BedrockBridge:
         Initialize Bridge for Sage public Lambda Function URL only.
         Only FUNCTION_URL is supported. Implements retry logic for Lambda 503 errors.
         """
-        self.api_url = api_url or os.getenv("FUNCTION_URL")
+        self.api_url = api_url or os.getenv("KEY")
         if not self.api_url:
-            raise ValueError("FUNCTION_URL must be provided or set in environment")
+            raise ValueError("KEY must be provided or set in environment")
 
-        self.api_password = os.getenv("API_PASSWORD")
+        self.api_password = os.getenv("PASSWORD")
         if not self.api_password:
-            raise ValueError("API_PASSWORD must be set in environment")
+            raise ValueError("PASSWORD must be set in environment")
 
         self.endpoint = f"{self.api_url.rstrip('/')}/v1/query"
 
