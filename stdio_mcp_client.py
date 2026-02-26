@@ -1,16 +1,3 @@
-"""
-Stdio MCP Client - Connects to MCP server via subprocess.
-
-This is the REAL MCP client that uses stdio transport to communicate
-with an MCP server running as a separate process.
-
-Key features:
-- Subprocess management (server runs as child process)
-- Connection health checking
-- Graceful shutdown
-- Error handling with retries
-"""
-
 import asyncio
 import json
 import logging
@@ -140,9 +127,26 @@ class StdioMCPClient:
             args=args,
         )
         
+        # Patch: Use a real log file for subprocess stderr if running in Colab or sys.stderr lacks fileno
+        import sys
+        errlog = sys.stderr
+        colab_detected = False
+        try:
+            import google.colab
+            colab_detected = True
+        except ImportError:
+            pass
+        use_logfile = False
+        try:
+            _ = errlog.fileno()
+        except Exception:
+            use_logfile = True
+        if colab_detected or use_logfile:
+            errlog = open("mcp_server_stderr.log", "a")
+
         try:
             # Start the subprocess and get streams with timeout
-            self._stdio_context = stdio_client(self._server_params)
+            self._stdio_context = stdio_client(self._server_params, errlog=errlog)
             streams = await asyncio.wait_for(
                 self._stdio_context.__aenter__(),
                 timeout=timeout
