@@ -447,14 +447,14 @@ class GrapherManager:
         # Validate chart-ready format
         if not chart_data.get("chart_ready"):
             return {
-                "error": "Data is not chart-ready! Use aggregate_for_chart first.",
-                "hint": "You must call aggregate_for_chart and use its output as input to create_chart. Manual formatting will not work."
+                "error": "Data is not chart-ready!.",
+                "hint": "You must call aggregate_for_chart and use its output as input to create_chart. If you do not have access to the aggregator tool, you cannot use the create_chart tool."
             }
         
         if "labels" not in chart_data or "values" not in chart_data:
             return {
-                "error": "Invalid chart data format. Must have 'labels' and 'values' arrays.",
-                "hint": "You must call aggregate_for_chart and use its output as input to create_chart. Manual formatting will not work."
+                "error": "Invalid chart data format..",
+                "hint": "You must call aggregate_for_chart and use its output as input to create_chart.  If you do not have access to the aggregator tool, you cannot use the create_chart tool."
             }
         
         labels = chart_data["labels"]
