@@ -78,7 +78,6 @@ class BedrockBridge:
                 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
                 r = _req.head(url, allow_redirects=True, timeout=10, verify=False)
                 resolved = r.url
-                print(f":link: Resolved short URL → {resolved}")
                 return resolved
             except Exception as e:
                 print(f":warning:  Could not resolve short URL ({e}), using as-is")
