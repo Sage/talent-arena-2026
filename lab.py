@@ -1563,7 +1563,7 @@ class MCPToolsWrapper:
         """Get list of available tool names."""
         return self._client.get_tools_list()
     
-    def get_tools_documentation(self) -> str:
+    def get_tools_documentation(self, traditional_only: bool = False) -> str:
         """Get formatted documentation for all tools with pack names and parameter schemas."""
         # Use the client's tool documentation which includes full parameter schemas
         if hasattr(self._client, 'tools') and self._client.tools:
