@@ -243,21 +243,10 @@ class ReActEngine:
         self.tools = tools
         self.max_iterations = max_iterations
 
-    def _tool_list(self):
+    def _tool_list(self) -> str:
         """Get formatted tool list with parameters if available."""
-        import inspect
-        # If called from an AIAgent instance, use traditional_only=True
-        caller_is_aiagent = False
-        stack = inspect.stack()
-        for frame_info in stack:
-            frame = frame_info.frame
-            if 'self' in frame.f_locals:
-                caller_self = frame.f_locals['self']
-                if caller_self.__class__.__name__ == 'AIAgent':
-                    caller_is_aiagent = True
-                    break
         if hasattr(self.tools, 'get_tools_documentation'):
-            return self.tools.get_tools_documentation(traditional_only=caller_is_aiagent)
+                return self.tools.get_tools_documentation()
         # Fallback to simple list of tool names
         return "\n".join(
             f"- {name}"
@@ -591,6 +580,8 @@ class Tools:
     import io
     import base64
 
+    
+
     # Workshop tools that match MCP server tools (organized by tool pack)
     traditional_tools = {
         "database": ["query_products", "query_sales", "get_analytics"]
@@ -606,29 +597,30 @@ class Tools:
         "generate_chart"
     ]
     
-    def __init__(self):
+    def __init__(self, session_two_tools=False):
         """Initialize tools with database connection and logs."""
         # Use local embedded demo database so Tools are self-contained
         from pathlib import Path
         
         # Initialize database (local embedded copy)
         self.conn = init_demo_database_local()
+        self.session_two_tools = session_two_tools
         
-    def get_traditional_tools(self)-> list[str]:
-        """Get list of traditional tool names (for displaying in agent docs)."""
-        all_tools = []
-        for pack_tools in self.traditional_tools.values():
-            all_tools.extend(pack_tools)
-        return all_tools
+
     def get_tools_list(self) -> list[str]:
         """Get list of available tool names (includes all tools for market intelligence)."""
         all_tools = []
+        if self.session_two_tools:
+            for pack_tools in self.traditional_tools.values():
+                all_tools.extend(pack_tools)
+            return all_tools
         # Include traditional tools
-        for pack_tools in self.traditional_tools.values():
-            all_tools.extend(pack_tools)
+        else:
+            for pack_tools in self.traditional_tools.values():
+                all_tools.extend(pack_tools)
         # Include legacy tools for market intelligence workshop
-        all_tools.extend(self.legacy_tools)
-        return all_tools
+            all_tools.extend(self.legacy_tools)
+            return all_tools
     
     def get_tool_pack(self, tool_name: str) -> str:
         """Get the pack name for a given tool."""
@@ -637,18 +629,21 @@ class Tools:
                 return pack_name
         return "unknown"
     
-    def get_tools_documentation(self, traditional_only: bool = False) -> str:
+    def get_tools_documentation(self) -> str:
         """Get formatted documentation for all tools with pack names. If traditional_only is True, only return traditional tools."""
         tool_docs = []
         # Document traditional tools
-        for pack_name, tools in self.traditional_tools.items():
-            for tool_name in tools:
-                if hasattr(self, tool_name):
-                    method = getattr(self, tool_name)
-                    doc = method.__doc__ or "No description"
-                    first_line = doc.strip().split('\n')[0]
-                    tool_docs.append(f"- {tool_name} [{pack_name}]: {first_line}")
-        if not traditional_only:
+
+        if self.session_two_tools is True:
+            
+            for pack_name, tools in self.traditional_tools.items():
+                for tool_name in tools:
+                    if hasattr(self, tool_name):
+                        method = getattr(self, tool_name)
+                        doc = method.__doc__ or "No description"
+                        first_line = doc.strip().split('\n')[0]
+                        tool_docs.append(f"- {tool_name} [{pack_name}]: {first_line}")
+        else:
             # Document legacy tools for market intelligence workshop
             for tool_name in self.legacy_tools:
                 if hasattr(self, tool_name):
@@ -1299,7 +1294,7 @@ def test_all_tools(verbose=True):
 # ============================================================
 
 
-class AIAgent(BaseAgent):
+class AIAgent():
     """
     AI Agent that can use either:
     1. Coupled tools (traditional approach - tools are tightly bound)
@@ -1367,8 +1362,8 @@ JSON FORMATTING RULES:
         if not self.tools:
             return []
         # Prefer get_traditional_tools if present (for Tools)
-        if hasattr(self.tools, 'get_traditional_tools'):
-            return self.tools.get_traditional_tools()
+        # if hasattr(self.tools, 'get_traditional_tools'):
+        #     return self.tools.get_traditional_tools()
         # Otherwise, use get_tools_list (for MCPToolsWrapper)
         if hasattr(self.tools, 'get_tools_list'):
             return self.tools.get_tools_list()
@@ -1383,7 +1378,7 @@ JSON FORMATTING RULES:
             return "(No tools available)"
         # If Tools class, only show traditional tools
         if hasattr(self.tools, 'get_tools_documentation'):
-            return self.tools.get_tools_documentation(traditional_only=True)
+            return self.tools.get_tools_documentation()
         # Fallback: generate basic documentation
         tool_docs = []
         for name in self.get_tools_list():
