@@ -225,10 +225,8 @@ def get_llm():
     use_bedrock = os.getenv("USE_BEDROCK", "true").lower() in ("true", "1", "yes")
     
     if use_bedrock:
-        print("🔧 Using BedrockBridge for LLM calls")
         return BedrockBridge()
     else:
-        print("🔧 Using FreeFlowLLM for LLM calls")
         return FreeFlowLLM()
 
 
