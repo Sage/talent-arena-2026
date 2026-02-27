@@ -1088,19 +1088,21 @@ class Tools:
         except Exception as e:
             return {"error": f"Unexpected error: {str(e)}"}
 
-    def generate_chart(self, price_dict):
+    def generate_chart(self, input_data, chart_type="bar"):
         """
-        Generate a QuickChart bar chart URL from price data.
+        Generate a QuickChart visualization URL from data.
         
-        Creates a shareable URL that renders a bar chart visualization of prices.
+        Creates a shareable URL that renders a chart visualization of numeric data.
         Uses the QuickChart.io service to generate charts without requiring local
         chart rendering libraries.
         
         Args:
-            price_dict (dict or str): Dictionary mapping labels to numeric values,
-                                     or JSON string representation of a dict.
-                                     Example: {"BTC": 65000, "ETH": 3500, "SOL": 140}
-                                     or '{"BTC": 65000, "ETH": 3500}'
+            input_data (dict or str): Dictionary mapping labels to numeric values,
+                                     or JSON string with data and chart_type.
+                                     For dict: {"BTC": 65000, "ETH": 3500}
+                                     For JSON string: '{"data": {"BTC": 65000, "ETH": 3500}, "chart_type": "pie"}'
+            chart_type (str): Chart type - "bar", "line", "pie", "doughnut", etc.
+                             Default: "bar" (ignored if specified in JSON input)
         
         Returns:
             str: Complete QuickChart URL that can be opened in a browser to view
@@ -1108,24 +1110,31 @@ class Tools:
         
         Examples:
             >>> tools = Tools()
-            >>> prices = {"BTC": 65000, "ETH": 3500, "SOL": 140}
-            >>> chart_url = tools.generate_chart(prices)
-            >>> print(chart_url)
-            https://quickchart.io/chart?c=%7B%22type%22%3A%22bar%22...
-            
-            # Open in browser to see the chart
-            >>> import webbrowser
-            >>> webbrowser.open(chart_url)
+            >>> # Direct call
+            >>> chart_url = tools.generate_chart({"BTC": 65000, "ETH": 3500}, "pie")
+            >>> 
+            >>> # ReAct call (single JSON string)
+            >>> chart_url = tools.generate_chart('{"data": {"BTC": 65000, "ETH": 3500}, "chart_type": "pie"}')
         """
         try:
             import json
             
-            # Handle JSON string input (e.g., '{"BTC": 65000}' from LLM)
-            if isinstance(price_dict, str):
+            # Handle ReAct JSON input (single parameter with data and chart_type)
+            if isinstance(input_data, str) and input_data.strip().startswith("{"):
                 try:
-                    price_dict = json.loads(price_dict)
-                except json.JSONDecodeError as e:
+                    params = json.loads(input_data)
+                    if isinstance(params, dict) and "data" in params:
+                        # ReAct format: {"data": {...}, "chart_type": "..."}
+                        price_dict = params["data"]
+                        chart_type = params.get("chart_type", chart_type)
+                    else:
+                        # Legacy format: just the data dict as JSON
+                        price_dict = params
+                except json.JSONDecodeError:
                     return f"Error: Invalid JSON string. {str(e)}"
+            else:
+                # Direct call: first param is data dict
+                price_dict = input_data
             
             if not isinstance(price_dict, dict):
                 return "Error: Input must be a dictionary (e.g., {'BTC': 65000, 'ETH': 3500})"
@@ -1149,10 +1158,10 @@ class Tools:
                     return f"Error: Non-numeric value found in price data: {value}"
 
             chart_config = {
-                "type": "bar",
+                "type": chart_type,
                 "data": {
                     "labels": labels,
-                    "datasets": [{"label": "Price (USDT)", "data": data}],
+                    "datasets": [{"label": "Value", "data": data}],
                 },
             }
 
