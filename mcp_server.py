@@ -448,13 +448,13 @@ class GrapherManager:
         if not chart_data.get("chart_ready"):
             return {
                 "error": "Data is not chart-ready! Use aggregate_for_chart first.",
-                "hint": "Call aggregate_for_chart with your raw data before calling create_chart"
+                "hint": "You must call aggregate_for_chart and use its output as input to create_chart. Manual formatting will not work."
             }
         
         if "labels" not in chart_data or "values" not in chart_data:
             return {
                 "error": "Invalid chart data format. Must have 'labels' and 'values' arrays.",
-                "hint": "Use aggregate_for_chart to format your data correctly"
+                "hint": "You must call aggregate_for_chart and use its output as input to create_chart. Manual formatting will not work."
             }
         
         labels = chart_data["labels"]
