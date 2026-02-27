@@ -50,16 +50,38 @@ class BedrockBridge:
         """
         Initialize Bridge for Sage public Lambda Function URL only.
         Only FUNCTION_URL is supported. Implements retry logic for Lambda 503 errors.
+        Supports short URLs (e.g. tinyurl) — resolves them once at init.
         """
         self.api_url = api_url or os.getenv("LLM_SERVICE_URL")
         if not self.api_url:
             raise ValueError("LLM_SERVICE_URL must be provided or set in environment")
+
+        # Resolve short URLs (tinyurl, bit.ly, etc.) to the real endpoint
+        self.api_url = self._resolve_url(self.api_url)
 
         self.api_password = os.getenv("PASSWORD")
         if not self.api_password:
             raise ValueError("PASSWORD must be set in environment")
 
         self.endpoint = f"{self.api_url.rstrip('/')}/v1/query"
+
+    @staticmethod
+    def _resolve_url(url: str) -> str:
+        """Follow redirects on short URLs to get the real Lambda endpoint."""
+        import requests as _req
+        import urllib3
+        from urllib.parse import urlparse
+        shortener_domains = {"tinyurl.com", "bit.ly", "t.co", "is.gd", "rb.gy"}
+        if urlparse(url).hostname in shortener_domains:
+            try:
+                # verify=False is safe here — we're only following a redirect, no credentials sent
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                r = _req.head(url, allow_redirects=True, timeout=10, verify=False)
+                resolved = r.url
+                return resolved
+            except Exception as e:
+                print(f":warning:  Could not resolve short URL ({e}), using as-is")
+        return url
 
     # No AWS signing needed for Lambda URL
 
