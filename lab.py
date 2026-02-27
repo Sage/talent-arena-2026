@@ -1456,7 +1456,7 @@ JSON FORMATTING RULES:
                 full_output.append(step)
         except ValueError as e:
             if "Invalid LLM format" in str(e):
-                print("\n❌ Sorry, I can't complete this request because the required tools or data are missing, or the LLM response was not in the expected format. Please check your tool packs and try again.")
+                print(f"\n❌ Sorry, I can't complete this request because the required tools or data are missing, or the LLM response was not in the expected format. Please check your tool packs and try again.{e}")
             else:
                 raise
         print("=" * 70)
