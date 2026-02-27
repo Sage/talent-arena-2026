@@ -28,10 +28,10 @@ python-dotenv>=1.0.0
 
 # ---- Jupyter & Notebook Support ----
 # Pinned to versions required by google-colab and jupyter-kernel-gateway
-ipython==7.34.0
-ipykernel==6.17.1
+# ipython==7.34.0
+# ipykernel==6.17.1
 jupyter>=1.0.0
-notebook>=5.7.6,<7.0
+# notebook>=5.7.6,<7.0
 nest-asyncio>=1.6.0
 
 # ---- Type Hints & Validation ----
