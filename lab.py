@@ -245,21 +245,20 @@ class ReActEngine:
 
     def _tool_list(self):
         """Get formatted tool list with parameters if available."""
-        # Check if tools object has detailed documentation method
+        import inspect
+        # If called from an AIAgent instance, use traditional_only=True
+        caller_is_aiagent = False
+        stack = inspect.stack()
+        for frame_info in stack:
+            frame = frame_info.frame
+            if 'self' in frame.f_locals:
+                caller_self = frame.f_locals['self']
+                if caller_self.__class__.__name__ == 'AIAgent':
+                    caller_is_aiagent = True
+                    break
         if hasattr(self.tools, 'get_tools_documentation'):
-            return self.tools.get_tools_documentation()
-        
+            return self.tools.get_tools_documentation(traditional_only=caller_is_aiagent)
         # Fallback to simple list of tool names
-        """
-        Generate a formatted list of available tools for the LLM.
-        
-        Dynamically inspects the tools object to find all public methods
-        (bound methods only, excluding imported classes/modules).
-        
-        Returns:
-            str: Newline-separated list of tool names prefixed with dashes.
-                 Example: "- get_stock_price\n- search_news\n- scrape_hacker_news"
-        """
         return "\n".join(
             f"- {name}"
             for name in dir(self.tools)
