@@ -638,8 +638,8 @@ class Tools:
                 return pack_name
         return "unknown"
     
-    def get_tools_documentation(self) -> str:
-        """Get formatted documentation for all tools with pack names."""
+    def get_tools_documentation(self, traditional_only: bool = False) -> str:
+        """Get formatted documentation for all tools with pack names. If traditional_only is True, only return traditional tools."""
         tool_docs = []
         # Document traditional tools
         for pack_name, tools in self.traditional_tools.items():
@@ -649,15 +649,14 @@ class Tools:
                     doc = method.__doc__ or "No description"
                     first_line = doc.strip().split('\n')[0]
                     tool_docs.append(f"- {tool_name} [{pack_name}]: {first_line}")
-        
-        # Document legacy tools for market intelligence workshop
-        for tool_name in self.legacy_tools:
-            if hasattr(self, tool_name):
-                method = getattr(self, tool_name)
-                doc = method.__doc__ or "No description"
-                first_line = doc.strip().split('\n')[0]
-                tool_docs.append(f"- {tool_name}: {first_line}")
-        
+        if not traditional_only:
+            # Document legacy tools for market intelligence workshop
+            for tool_name in self.legacy_tools:
+                if hasattr(self, tool_name):
+                    method = getattr(self, tool_name)
+                    doc = method.__doc__ or "No description"
+                    first_line = doc.strip().split('\n')[0]
+                    tool_docs.append(f"- {tool_name}: {first_line}")
         return "\n".join(tool_docs)
 
     
@@ -1383,10 +1382,9 @@ JSON FORMATTING RULES:
         """Get formatted documentation for all tools."""
         if not self.tools:
             return "(No tools available)"
-        
+        # If Tools class, only show traditional tools
         if hasattr(self.tools, 'get_tools_documentation'):
-            return self.tools.get_tools_documentation()
-        
+            return self.tools.get_tools_documentation(traditional_only=True)
         # Fallback: generate basic documentation
         tool_docs = []
         for name in self.get_tools_list():
